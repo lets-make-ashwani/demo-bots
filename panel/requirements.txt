@@ -1,0 +1,6 @@
+fastapi
+uvicorn
+psutil
+websockets
+jinja2
+python-dotenv

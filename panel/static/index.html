@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bot Control Hub</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&family=Outfit:wght@400;600;800&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/index.css">
+</head>
+<body>
+    <div class="dashboard-container">
+        <!-- HEADER -->
+        <header class="hub-header">
+            <div class="logo-area">
+                <span class="pulse-ring"></span>
+                <h1>Bot Control Hub</h1>
+            </div>
+            <div class="subtitle">Centralized Management System</div>
+        </header>
+
+        <!-- GRID LAYOUT -->
+        <main class="bots-grid">
+            <!-- SCRAPER BOT CARD -->
+            <section class="bot-card" id="card-scraper">
+                <div class="card-header">
+                    <div class="bot-info">
+                        <h2>Scraper Bot</h2>
+                        <p class="description">Monitors and forwards links</p>
+                    </div>
+                    <div class="status-badge stopped">
+                        <span class="status-dot"></span>
+                        <span class="status-text">Stopped</span>
+                    </div>
+                </div>
+                
+                <div class="metrics-row">
+                    <div class="metric">
+                        <span class="metric-label">Memory</span>
+                        <span class="metric-val" id="mem-scraper">0.0 MB</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-label">CPU</span>
+                        <span class="metric-val" id="cpu-scraper">0.0%</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-label">Log Size</span>
+                        <span class="metric-val" id="log-scraper">0.0 KB</span>
+                    </div>
+                </div>
+
+                <div class="controls-row">
+                    <button class="btn btn-start" onclick="startBot('scraper')">Start Bot</button>
+                    <button class="btn btn-stop" disabled onclick="stopBot('scraper')">Stop Bot</button>
+                </div>
+
+                <div class="terminal-container">
+                    <div class="terminal-header">
+                        <span>Terminal Output</span>
+                        <button class="btn-clear" onclick="clearTerminal('scraper')">Clear</button>
+                    </div>
+                    <div class="terminal-body" id="term-scraper">
+                        <div class="log-line system">Waiting for process startup...</div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- PIPELINE BOT CARD -->
+            <section class="bot-card" id="card-pipeline">
+                <div class="card-header">
+                    <div class="bot-info">
+                        <h2>Pipeline Bot</h2>
+                        <p class="description">Processes & classifies link feeds</p>
+                    </div>
+                    <div class="status-badge stopped">
+                        <span class="status-dot"></span>
+                        <span class="status-text">Stopped</span>
+                    </div>
+                </div>
+                
+                <div class="metrics-row">
+                    <div class="metric">
+                        <span class="metric-label">Memory</span>
+                        <span class="metric-val" id="mem-pipeline">0.0 MB</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-label">CPU</span>
+                        <span class="metric-val" id="cpu-pipeline">0.0%</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-label">Log Size</span>
+                        <span class="metric-val" id="log-pipeline">0.0 KB</span>
+                    </div>
+                </div>
+
+                <div class="controls-row">
+                    <button class="btn btn-start" onclick="startBot('pipeline')">Start Bot</button>
+                    <button class="btn btn-stop" disabled onclick="stopBot('pipeline')">Stop Bot</button>
+                </div>
+
+                <div class="terminal-container">
+                    <div class="terminal-header">
+                        <span>Terminal Output</span>
+                        <button class="btn-clear" onclick="clearTerminal('pipeline')">Clear</button>
+                    </div>
+                    <div class="terminal-body" id="term-pipeline">
+                        <div class="log-line system">Waiting for process startup...</div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ORGANIZER BOT CARD -->
+            <section class="bot-card" id="card-organizer">
+                <div class="card-header">
+                    <div class="bot-info">
+                        <h2>Organizer Bot</h2>
+                        <p class="description">Enhances & compiles post templates</p>
+                    </div>
+                    <div class="status-badge stopped">
+                        <span class="status-dot"></span>
+                        <span class="status-text">Stopped</span>
+                    </div>
+                </div>
+                
+                <div class="metrics-row">
+                    <div class="metric">
+                        <span class="metric-label">Memory</span>
+                        <span class="metric-val" id="mem-organizer">0.0 MB</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-label">CPU</span>
+                        <span class="metric-val" id="cpu-organizer">0.0%</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-label">Log Size</span>
+                        <span class="metric-val" id="log-organizer">0.0 KB</span>
+                    </div>
+                </div>
+
+                <div class="controls-row">
+                    <button class="btn btn-start" onclick="startBot('organizer')">Start Bot</button>
+                    <button class="btn btn-stop" disabled onclick="stopBot('organizer')">Stop Bot</button>
+                </div>
+
+                <div class="terminal-container">
+                    <div class="terminal-header">
+                        <span>Terminal Output</span>
+                        <button class="btn-clear" onclick="clearTerminal('organizer')">Clear</button>
+                    </div>
+                    <div class="terminal-body" id="term-organizer">
+                        <div class="log-line system">Waiting for process startup...</div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script src="/static/index.js"></script>
+</body>
+</html>

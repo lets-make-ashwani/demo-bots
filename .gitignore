@@ -1,0 +1,58 @@
+# Git ignore for demo bot system
+
+# Secrets & credentials
+**/.env
+.env
+**/*.session
+**/*.session-journal
+**/*.session-wal
+**/*.session-shm
+
+# Databases & local sqlite backups
+**/*.db
+**/*.db-journal
+**/*.sqlite
+**/*.sqlite-journal
+
+# Secrets files generated on PC
+SESSION_STRINGS_SAVE_THIS.txt
+migrate_to_mongodb.py
+
+# Python cache & build files
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.pyd
+**/.pytest_cache/
+.pytest_cache/
+.venv/
+venv/
+**/venv/
+
+# Temp files, log outputs, and lock files
+**/temp_thumbs/
+**/logs/
+**/pids/
+*.log
+**/*.log
+**/*.pid
+**/*.lock
+
+# Excel data & scratch files
+**/*.xlsx
+**/*.xls
+**/*.csv
+
+# IDE / Editor configurations
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS system files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+
