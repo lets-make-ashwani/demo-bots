@@ -23,6 +23,8 @@ services:
         sync: false
       - key: BOT_TOKEN
         sync: false
+      - key: GROQ_MODEL
+        value: llama-3.3-70b-versatile
 
       # Bot session strings
       - key: SESSION_STRING_SCRAPER
