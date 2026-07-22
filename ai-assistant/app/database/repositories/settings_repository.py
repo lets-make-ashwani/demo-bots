@@ -1,7 +1,7 @@
 from typing import Optional, Dict, Any
+from app.config import settings
 from app.database.repositories.base import BaseRepository
 from app.utils.constants import (
-    DEFAULT_MODEL, 
     DEFAULT_TEMPERATURE, 
     DEFAULT_MAX_HISTORY_TOKENS, 
     DEFAULT_LANGUAGE
@@ -20,7 +20,7 @@ class SettingsRepository(BaseRepository):
             default_settings = {
                 "user_id": user_id,
                 "system_prompt": "You are a helpful AI assistant.",
-                "preferred_model": DEFAULT_MODEL,
+                "preferred_model": settings.groq_model,
                 "temperature": DEFAULT_TEMPERATURE,
                 "max_history_tokens": DEFAULT_MAX_HISTORY_TOKENS,
                 "language": DEFAULT_LANGUAGE
