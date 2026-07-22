@@ -139,34 +139,52 @@ async def resolve_chat_id(app: Client, chat_value: str) -> int:
 
 
 
-async def process_and_publish_post(app: Client, target_chat_id: int, original_msg, diskwala_link: str, reply_msg_id: int):
+async def process_and_publish_post(app: Client, target_chat_id: int, original_msg, diskwala_link: str, reply_msg):
+    reply_msg_id = reply_msg.id
+
     # Check if original message is empty or missing media
-    if not original_msg or getattr(original_msg, "empty", False):
-        print(f"[-] Skipping message {reply_msg_id}: Original message was deleted.")
-        mark_as_processed(reply_msg_id)
-        return
+    is_original_msg_valid = original_msg and not getattr(original_msg, "empty", False)
 
-    media_obj = original_msg.video or original_msg.document
-    raw_caption = original_msg.caption or ""
-    msg_text = original_msg.text or ""
-
-    # Detect copyright infringement block texts
+    raw_caption = ""
     is_copyrighted = False
-    if "copyright infringement" in raw_caption.lower() or "couldn't be displayed" in raw_caption.lower():
-        is_copyrighted = True
-    if "copyright infringement" in msg_text.lower() or "couldn't be displayed" in msg_text.lower():
-        is_copyrighted = True
 
-    if is_copyrighted or not media_obj:
-        print(f"[-] Skipping message {reply_msg_id}: Video was removed due to copyright infringement.")
-        mark_as_processed(reply_msg_id)
-        return
+    if is_original_msg_valid:
+        media_obj = original_msg.video or original_msg.document
+        raw_caption = original_msg.caption or ""
+        msg_text = original_msg.text or ""
 
-    if not raw_caption and media_obj and hasattr(media_obj, "file_name") and media_obj.file_name:
-        # If caption is missing, use the video filename
-        raw_caption = media_obj.file_name
-        # Clean up filename dots/underscores for cleaner presentation
-        raw_caption = raw_caption.replace(".", " ").replace("_", " ")
+        # Detect copyright infringement block texts
+        if "copyright infringement" in raw_caption.lower() or "couldn't be displayed" in raw_caption.lower():
+            is_copyrighted = True
+        if "copyright infringement" in msg_text.lower() or "couldn't be displayed" in msg_text.lower():
+            is_copyrighted = True
+
+        if is_copyrighted:
+            print(f"[-] Skipping message {reply_msg_id}: Video was removed due to copyright infringement.")
+            mark_as_processed(reply_msg_id)
+            return
+
+        if not raw_caption and media_obj and hasattr(media_obj, "file_name") and media_obj.file_name:
+            # If caption is missing, use the video filename
+            raw_caption = media_obj.file_name
+            # Clean up filename dots/underscores for cleaner presentation
+            raw_caption = raw_caption.replace(".", " ").replace("_", " ")
+    else:
+        # Fallback if original video is deleted/missing
+        print(f"[!] Original message missing/deleted for reply {reply_msg_id}. Trying webpage or media fallback...")
+        if reply_msg.web_page:
+            raw_caption = reply_msg.web_page.title or reply_msg.web_page.description or ""
+        
+        # Try media filename as fallback
+        if not raw_caption:
+            for attr in ["animation", "video", "document"]:
+                media = getattr(reply_msg, attr, None)
+                if media and getattr(media, "file_name", None):
+                    raw_caption = media.file_name.replace(".", " ").replace("_", " ")
+                    break
+
+        if not raw_caption:
+            raw_caption = "Watch Video"
 
     # Combine original caption text and watch link
     caption_text = (
@@ -176,28 +194,68 @@ async def process_and_publish_post(app: Client, target_chat_id: int, original_ms
     )
 
     thumb_path = None
-    media_obj = original_msg.video or original_msg.document
+    os.makedirs("temp_thumbs", exist_ok=True)
+    raw_path = f"temp_thumbs/raw_{reply_msg_id}.jpg"
 
-    # Attempt to download the raw thumbnail
-    if media_obj and media_obj.thumbs:
-        print("[-] Downloading video thumbnail...")
+    # 1. Attempt to download from reply_msg.web_page.photo first (link preview)
+    if reply_msg.web_page and reply_msg.web_page.photo:
+        print("[-] Downloading thumbnail from DiskWala link preview...")
         try:
-            os.makedirs("temp_thumbs", exist_ok=True)
-            raw_path = f"temp_thumbs/raw_{original_msg.id}.jpg"
-            
-            # Pass the Thumbnail object directly to download cleanly
-            thumb_path = await app.download_media(media_obj.thumbs[0], file_name=raw_path)
-        except FileReferenceExpired:
-            print("[-] File reference expired on thumbnail download. Attempting refetch...")
+            thumb_path = await app.download_media(reply_msg.web_page.photo, file_name=raw_path)
+        except Exception as we:
+            print(f"[!] Link preview download failed: {we}")
+
+    # 2. Attempt to download from reply_msg.animation.thumbs[0] (GIF/Animation)
+    if not thumb_path and getattr(reply_msg, "animation", None) and reply_msg.animation.thumbs:
+        print("[-] Downloading thumbnail from DiskWala GIF/animation reply...")
+        try:
+            thumb_path = await app.download_media(reply_msg.animation.thumbs[0], file_name=raw_path)
+        except Exception as ae:
+            print(f"[!] GIF thumbnail download failed: {ae}")
+
+    # 3. Attempt to download from reply_msg.photo (Photo)
+    if not thumb_path and getattr(reply_msg, "photo", None):
+        print("[-] Downloading thumbnail from DiskWala photo reply...")
+        try:
+            thumb_path = await app.download_media(reply_msg.photo, file_name=raw_path)
+        except Exception as pe:
+            print(f"[!] Photo download failed: {pe}")
+
+    # 4. Attempt to download from reply_msg.video.thumbs[0] (Video)
+    if not thumb_path and getattr(reply_msg, "video", None) and reply_msg.video.thumbs:
+        print("[-] Downloading thumbnail from DiskWala video reply...")
+        try:
+            thumb_path = await app.download_media(reply_msg.video.thumbs[0], file_name=raw_path)
+        except Exception as ve:
+            print(f"[!] Video thumbnail download failed: {ve}")
+
+    # 5. Attempt to download from reply_msg.document.thumbs[0] (Document)
+    if not thumb_path and getattr(reply_msg, "document", None) and reply_msg.document.thumbs:
+        print("[-] Downloading thumbnail from DiskWala document reply...")
+        try:
+            thumb_path = await app.download_media(reply_msg.document.thumbs[0], file_name=raw_path)
+        except Exception as de:
+            print(f"[!] Document thumbnail download failed: {de}")
+
+    # Fallback to original message's thumbnail if link preview and media download failed or weren't available
+    if not thumb_path and is_original_msg_valid:
+        media_obj = original_msg.video or original_msg.document
+        if media_obj and media_obj.thumbs:
+            print("[-] Downloading video thumbnail from original file...")
             try:
-                fresh_msg = await app.get_messages(original_msg.chat.id, original_msg.id)
-                new_media = fresh_msg.video or fresh_msg.document
-                if new_media and new_media.thumbs:
-                    thumb_path = await app.download_media(new_media.thumbs[0], file_name=raw_path)
-            except Exception as fe:
-                print(f"[!] Fallback download failed: {fe}")
-        except Exception as e:
-            print(f"[!] Thumbnail processing failed: {e}")
+                # Pass the Thumbnail object directly to download cleanly
+                thumb_path = await app.download_media(media_obj.thumbs[0], file_name=raw_path)
+            except FileReferenceExpired:
+                print("[-] File reference expired on thumbnail download. Attempting refetch...")
+                try:
+                    fresh_msg = await app.get_messages(original_msg.chat.id, original_msg.id)
+                    new_media = fresh_msg.video or fresh_msg.document
+                    if new_media and new_media.thumbs:
+                        thumb_path = await app.download_media(new_media.thumbs[0], file_name=raw_path)
+                except Exception as fe:
+                    print(f"[!] Fallback download failed: {fe}")
+            except Exception as e:
+                print(f"[!] Thumbnail processing failed: {e}")
 
     # Publish compiled post to target channel
     print("[-] Publishing post to organized channel...")
@@ -213,7 +271,8 @@ async def process_and_publish_post(app: Client, target_chat_id: int, original_ms
                 chat_id=target_chat_id,
                 text=caption_text
             )
-        print(f"[+] Post published successfully for message {original_msg.id}!")
+        msg_id_log = original_msg.id if is_original_msg_valid else f"reply_{reply_msg_id}"
+        print(f"[+] Post published successfully for message {msg_id_log}!")
         mark_as_processed(reply_msg_id)
     except Exception as e:
         print(f"[x] Failed to publish post: {e}")
@@ -269,12 +328,14 @@ async def run_organizer(app: Client, target_chat_id: int):
                         
                         try:
                             # Fetch the original video message sent to DiskWala Bot
-                            original_msg = await app.get_messages(TARGET_BOT_USERNAME, reply_to_id)
-                            if original_msg and not original_msg.empty:
-                                await process_and_publish_post(app, target_chat_id, original_msg, link, reply_msg.id)
-                            else:
-                                print(f"[!] Original video message {reply_to_id} not found or deleted from chat. Skipping.")
-                                mark_as_processed(reply_msg.id)
+                            original_msg = None
+                            try:
+                                original_msg = await app.get_messages(TARGET_BOT_USERNAME, reply_to_id)
+                            except Exception as fetch_err:
+                                print(f"[!] Original message fetch failed: {fetch_err}. Proceeding with reply web preview...")
+
+                            # process_and_publish_post handles missing/deleted messages gracefully
+                            await process_and_publish_post(app, target_chat_id, original_msg, link, reply_msg)
                         except Exception as e:
                             print(f"[!] Error fetching original message: {e}")
                             
