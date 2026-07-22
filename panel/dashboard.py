@@ -117,6 +117,14 @@ BOTS_REGISTRY = {
         "cwd": os.path.join(BASE_DIR, "organisepost"),
         "log_file": os.path.join(LOGS_DIR, "organizer.log"),
         "process": None
+    },
+    "ai_assistant": {
+        "name": "AI Assistant Bot",
+        "description": "Enterprise AI Telegram Chat Assistant with persistent memory",
+        "script": os.path.join(BASE_DIR, "ai-assistant", "run.py"),
+        "cwd": os.path.join(BASE_DIR, "ai-assistant"),
+        "log_file": os.path.join(LOGS_DIR, "ai_assistant.log"),
+        "process": None
     }
 }
 

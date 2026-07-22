@@ -151,6 +151,50 @@
                     </div>
                 </div>
             </section>
+
+            <!-- AI ASSISTANT BOT CARD -->
+            <section class="bot-card" id="card-ai_assistant">
+                <div class="card-header">
+                    <div class="bot-info">
+                        <h2>AI Assistant Bot</h2>
+                        <p class="description">Enterprise AI Telegram Chat Assistant</p>
+                    </div>
+                    <div class="status-badge stopped">
+                        <span class="status-dot"></span>
+                        <span class="status-text">Stopped</span>
+                    </div>
+                </div>
+                
+                <div class="metrics-row">
+                    <div class="metric">
+                        <span class="metric-label">Memory</span>
+                        <span class="metric-val" id="mem-ai_assistant">0.0 MB</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-label">CPU</span>
+                        <span class="metric-val" id="cpu-ai_assistant">0.0%</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-label">Log Size</span>
+                        <span class="metric-val" id="log-ai_assistant">0.0 KB</span>
+                    </div>
+                </div>
+
+                <div class="controls-row">
+                    <button class="btn btn-start" onclick="startBot('ai_assistant')">Start Bot</button>
+                    <button class="btn btn-stop" disabled onclick="stopBot('ai_assistant')">Stop Bot</button>
+                </div>
+
+                <div class="terminal-container">
+                    <div class="terminal-header">
+                        <span>Terminal Output</span>
+                        <button class="btn-clear" onclick="clearTerminal('ai_assistant')">Clear</button>
+                    </div>
+                    <div class="terminal-body" id="term-ai_assistant">
+                        <div class="log-line system">Waiting for process startup...</div>
+                    </div>
+                </div>
+            </section>
         </main>
     </div>
 

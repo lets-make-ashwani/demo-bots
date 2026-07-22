@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  mongodb:
+    image: mongo:latest
+    container_name: ai_assistant_db
+    restart: always
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+
+  bot:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    container_name: ai_assistant_bot
+    restart: always
+    depends_on:
+      - mongodb
+    env_file:
+      - ../.env
+    environment:
+      # Override MONGODB_URI to point to the docker container service name
+      - MONGODB_URI=mongodb://mongodb:27017
+      - ENVIRONMENT=production
+    volumes:
+      - ../logs:/app/logs
+
+volumes:
+  mongodb_data:

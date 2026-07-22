@@ -32,8 +32,6 @@ pyrogram.utils.MAX_USER_ID = 99999999999999
 from pyrogram import Client, idle
 from pyrogram.errors import FloodWait, FileReferenceExpired
 from PIL import Image, ImageEnhance
-from google import genai
-from google.genai import types
 
 # Load environment variables
 load_dotenv(override=True)
@@ -51,20 +49,8 @@ TARGET_BOT_USERNAME = os.getenv("TARGET_BOT_USERNAME", "DiskWalaFileUploaderBot"
 DB_FILE = os.getenv("DB_FILE", "organizer_progress.db")
 COOLDOWN = int(os.getenv("COOLDOWN_BETWEEN_POSTS", "15"))
 SCAN_COOLDOWN = int(os.getenv("SCAN_COOLDOWN", "300"))
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 
-# Configure Gemini if API key is present and not the placeholder
-gemini_enabled = False
-gemini_client = None
-if GEMINI_API_KEY and GEMINI_API_KEY != "YOUR_GEMINI_API_KEY":
-    try:
-        gemini_client = genai.Client(api_key=GEMINI_API_KEY)
-        gemini_enabled = True
-        print("[+] Gemini AI configured successfully with Google Search Grounding (google-genai).")
-    except Exception as e:
-        print(f"[!] Failed to configure Gemini AI: {e}. Fallback parser will be used.")
-else:
-    print("[!] Warning: GEMINI_API_KEY is not configured in .env. Fallback regex parser will be used.")
+
 
 # ================= DATABASE HELPERS =================
 from pymongo import MongoClient
@@ -179,243 +165,6 @@ def enhance_thumbnail(input_path: str, output_path: str):
         print(f"[x] Pillow enhancement failed: {e}")
         return False
 
-# ================= LOCAL FALLBACK PARSER =================
-def parse_caption_locally(raw_text: str) -> dict:
-    if not raw_text:
-        return {
-            "title": "Untitled Movie",
-            "year": "N/A",
-            "type": "Movie",
-            "country": "Unknown",
-            "episodes_or_part": None,
-            "quality": "HD",
-            "languages": ["Unknown"],
-            "genres": ["Entertainment"],
-            "hashtags": ["#Movie"]
-        }
-        
-    # Remove file extensions like .mkv, .mp4, etc.
-    clean_text = re.sub(r'\.(mkv|mp4|avi|srt)$', '', raw_text, flags=re.IGNORECASE)
-    # Replace dots and underscores with spaces
-    clean_text = clean_text.replace(".", " ").replace("_", " ")
-    
-    # Try to extract year (1900-2099)
-    year_match = re.search(r'\b((?:19|20)\d{2})\b', clean_text)
-    year = year_match.group(1) if year_match else "N/A"
-    
-    # Try to extract quality
-    quality_match = re.search(r'\b(\d{3,4}p|HEVC|x265|x264|WEB-DL|HDRip|BluRay)\b', clean_text, re.IGNORECASE)
-    quality = quality_match.group(1).upper() if quality_match else "HD"
-    
-    # Try to extract languages
-    langs = []
-    if re.search(r'\b(hin|hindi)\b', clean_text, re.IGNORECASE):
-        langs.append("Hindi")
-    if re.search(r'\b(eng|english)\b', clean_text, re.IGNORECASE):
-        langs.append("English")
-    if re.search(r'\b(ben|bengali)\b', clean_text, re.IGNORECASE):
-        langs.append("Bengali")
-    if re.search(r'\b(kor|korean)\b', clean_text, re.IGNORECASE):
-        langs.append("Korean")
-    if re.search(r'\b(tam|tamil)\b', clean_text, re.IGNORECASE):
-        langs.append("Tamil")
-    if re.search(r'\b(tel|telugu)\b', clean_text, re.IGNORECASE):
-        langs.append("Telugu")
-    if not langs:
-        langs = ["Unknown"]
-        
-    # Try to extract episodes/parts - put longest/most specific patterns first!
-    ep_match = re.search(r'(S\d+(?:\s?(?:COMBINED|COMPLETE|EPISODES?|EP)?\s?(?:\[E\d+-E\d+\]|\(E\d+-E\d+\)|\[EP\d+-EP\d+\]|\(EP\d+-EP\d+\)|EP\s?\(?\d+-\d+\)?|EP\d+|E\d+))?|Part\s?\d+)', clean_text, re.IGNORECASE)
-    episodes_or_part = ep_match.group(1).strip() if ep_match and ep_match.group(1) else None
-    
-    # Clean the title (everything before the year or first quality indicator)
-    title = clean_text
-    # Cut off at year
-    if year_match:
-        title = title.split(year_match.group(0))[0]
-    # Cut off at quality indicator if present
-    if quality_match and quality_match.group(0) in title:
-        title = title.split(quality_match.group(0))[0]
-    # Cut off at episode if present
-    if episodes_or_part and episodes_or_part in title:
-        title = title.split(episodes_or_part)[0]
-        
-    # Clean up trailing punctuation or open brackets from the title
-    title = title.rstrip("()[]- :+=\\/").strip()
-    if not title:
-        title = "Untitled Movie"
-        
-    # Generate hashtags
-    hashtags = []
-    # Strip any special symbols/brackets from title before making it a hashtag
-    clean_hashtag_title = re.sub(r'[^\w\s]', '', title)
-    title_hashtag = "#" + "".join(clean_hashtag_title.split())
-    if len(title_hashtag) > 1:
-        hashtags.append(title_hashtag)
-    for l in langs:
-        if l != "Unknown":
-            hashtags.append("#" + l)
-    if year != "N/A":
-        hashtags.append("#" + year)
-    if quality != "HD":
-        hashtags.append("#" + quality)
-    if not hashtags:
-        hashtags = ["#Movie"]
-        
-    return {
-        "title": title,
-        "year": year,
-        "type": "Movie" if "S0" not in clean_text.upper() and "E0" not in clean_text.upper() else "Web Series",
-        "country": "South Korea" if "korean" in clean_text.lower() or "kor" in clean_text.lower() else ("India" if "hindi" in clean_text.lower() or "bengali" in clean_text.lower() or "tamil" in clean_text.lower() else "Unknown"),
-        "episodes_or_part": episodes_or_part,
-        "quality": quality,
-        "languages": langs,
-        "genres": ["Entertainment"],
-        "hashtags": hashtags
-    }
-
-# ================= OLLAMA LOCAL PARSER =================
-def parse_caption_with_ollama(raw_caption: str) -> dict:
-    url = "http://localhost:11434/api/generate"
-    
-    prompt = (
-        f"Analyze the raw movie/series title: \"{raw_caption}\". "
-        "Extract details and format your response strictly as a JSON object matching this structure: "
-        "{\n"
-        "  \"title\": \"Movie Title\",\n"
-        "  \"year\": \"Release Year (or 'N/A')\",\n"
-        "  \"type\": \"Movie or Web Series\",\n"
-        "  \"country\": \"Country of production (e.g. India, South Korea)\",\n"
-        "  \"episodes_or_part\": \"Season/Episode/Part details if present (e.g. S01 [E01-E06], Part 02) or null if none\",\n"
-        "  \"quality\": \"Resolution (e.g. 720p, 1080p, HEVC)\",\n"
-        "  \"languages\": [\"Audio languages found (e.g. Hindi, Korean)\"],\n"
-        "  \"genres\": [\"Genres (e.g. Action, Comedy)\"],\n"
-        "  \"hashtags\": [\"#Hashtags (e.g. #Hindi, #Action)\"]\n"
-        "}"
-    )
-    
-    data = {
-        "model": "qwen3.6:latest",
-        "prompt": prompt,
-        "format": "json",
-        "stream": False,
-        "options": {
-            "temperature": 0.0
-        }
-    }
-    
-    try:
-        import urllib.request
-        import urllib.parse
-        req = urllib.request.Request(
-            url,
-            data=json.dumps(data).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST"
-        )
-        # Timeout after 8 seconds to fail fast if Ollama is not running
-        with urllib.request.urlopen(req, timeout=8) as response:
-            res_data = json.loads(response.read().decode("utf-8"))
-            content_text = res_data.get("response", "").strip()
-            result = json.loads(content_text)
-            return result
-    except Exception as e:
-        print(f"[!] Ollama parse failed: {e}")
-        return None
-
-# ================= GEMINI CAPTION PARSER =================
-async def verify_caption_with_gemini(raw_caption: str) -> dict:
-    fallback_data = parse_caption_locally(raw_caption)
-
-    if not gemini_enabled:
-        print("[-] Gemini disabled. Trying local Ollama (Qwen) parser...")
-        ollama_res = parse_caption_with_ollama(raw_caption)
-        if ollama_res:
-            print("[+] Successfully parsed using local Ollama!")
-            return ollama_res
-        return fallback_data
-
-    # Structured prompt requesting Search Grounding verify & clean
-    prompt = (
-        f"You are a movie database verifier. Analyze the following raw movie/series title: \"{raw_caption}\"\n\n"
-        "Instructions:\n"
-        "1. Search Google using the movie name to check the official IMDb/Wikipedia title spelling and release year.\n"
-        "2. Correct any typos or spelling mistakes in the title.\n"
-        "3. Find the correct release year.\n"
-        "4. Find the production country/country of origin of the movie or show.\n"
-        "5. Identify if there are any specific episode, season, or part details mentioned in the raw title (e.g., S01, E01-E06, Part 2, S01E01) and capture them exactly.\n"
-        "6. Determine if it is a 'Movie' or 'Web Series'.\n"
-        "7. Respond ONLY with a JSON object matching this structure (do not include any conversational text or markdown codeblock wrapper):\n"
-        "{\n"
-        "  \"title\": \"Official Correct Movie Title\",\n"
-        "  \"year\": \"Official Release Year (or 'N/A')\",\n"
-        "  \"type\": \"Movie or Web Series\",\n"
-        "  \"country\": \"Country of production (e.g. India, South Korea, United States)\",\n"
-        "  \"episodes_or_part\": \"Season/Episode/Part details found in raw title (e.g. S01 [E01-E06], Part 02) or null if none\",\n"
-        "  \"quality\": \"Extracted resolution/format (e.g. 720p, 1080p, HEVC)\",\n"
-        "  \"languages\": [\"Extracted audio languages (e.g. Hindi, Korean, Dual Audio)\"],\n"
-        "  \"genres\": [\"Official genres from search (e.g. Action, Drama)\"],\n"
-        "  \"hashtags\": [\"#Hashtags (e.g. #Hindi, #Action, #Movie, #Year)\"]\n"
-        "}"
-    )
-
-    retries = 3
-    for attempt in range(retries):
-        try:
-            config = types.GenerateContentConfig(
-                tools=[{"google_search": {}}],
-                temperature=0.0
-            )
-            
-            # Request Gemini response
-            response = await asyncio.to_thread(
-                gemini_client.models.generate_content,
-                model='gemini-2.5-flash',
-                contents=prompt,
-                config=config
-            )
-            
-            # Extract text content
-            content_text = response.text.strip()
-            
-            # Strip markdown block wrappers if model added them
-            if content_text.startswith("```"):
-                content_text = re.sub(r"^```(?:json)?\n", "", content_text)
-                content_text = re.sub(r"\n```$", "", content_text)
-                content_text = content_text.strip()
-                
-            result = json.loads(content_text)
-            return result
-        except json.JSONDecodeError as je:
-            print(f"[!] JSON parsing error from Gemini on attempt {attempt+1}: {je}")
-            # Try to extract JSON manually
-            match = re.search(r"\{.*\}", response.text, re.DOTALL)
-            if match:
-                try:
-                    return json.loads(match.group(0))
-                except Exception:
-                    pass
-        except Exception as e:
-            # Handle rate limiting or other API issues
-            if "429" in str(e) or "quota" in str(e).lower():
-                wait_time = (attempt + 1) * 10
-                print(f"[-] Gemini API Rate limit hit. Waiting for {wait_time} seconds...")
-                await asyncio.sleep(wait_time)
-            else:
-                print(f"[!] Gemini API call failed on attempt {attempt+1}: {e}")
-                break
-                
-    print("[-] Gemini failed. Trying local Ollama (Qwen) parser...")
-    try:
-        ollama_res = await asyncio.to_thread(parse_caption_with_ollama, raw_caption)
-        if ollama_res:
-            print("[+] Successfully parsed using local Ollama!")
-            return ollama_res
-    except Exception as oe:
-        print(f"[!] Local Ollama parser thread call failed: {oe}")
-
-    print("[-] Falling back to local parsed caption.")
-    return fallback_data
 
 async def process_and_publish_post(app: Client, target_chat_id: int, original_msg, diskwala_link: str, reply_msg_id: int):
     # Check if original message is empty or missing media
@@ -443,50 +192,14 @@ async def process_and_publish_post(app: Client, target_chat_id: int, original_ms
     if not raw_caption and media_obj and hasattr(media_obj, "file_name") and media_obj.file_name:
         # If caption is missing, use the video filename
         raw_caption = media_obj.file_name
-        # Clean up filename dots/underscores for cleaner parsing
+        # Clean up filename dots/underscores for cleaner presentation
         raw_caption = raw_caption.replace(".", " ").replace("_", " ")
 
-    print(f"[-] Parsing caption with Gemini: \"{raw_caption[:40]}...\"")
-    
-    # Clean/Verify data via Gemini
-    info = await verify_caption_with_gemini(raw_caption)
-    
-    # Format tags/genres nicely
-    langs_str = ", ".join(info.get("languages", ["Unknown"]))
-    genres_str = ", ".join(info.get("genres", ["Entertainment"]))
-    hashtags_str = " ".join(info.get("hashtags", ["#Movie"]))
-    title_display = info.get("title", "Untitled Movie").upper()
-    year_display = info.get("year", "N/A")
-    quality_display = info.get("quality", "HD")
-    type_display = info.get("type", "Movie")
-    country_display = info.get("country", "Unknown")
-    ep_part = info.get("episodes_or_part")
-
-    # Combine title, year, and episode/parts on the first line
-    title_line = f"🔥 {title_display}"
-    if year_display and year_display != "N/A":
-        title_line += f" ({year_display})"
-    if ep_part:
-        title_line += f" {ep_part.upper()}"
-
-    # Retrieve raw original caption or filename for display
-    display_original_caption = original_msg.caption or (media_obj.file_name if media_obj and hasattr(media_obj, "file_name") else "N/A")
-
-    # Final post visual template
+    # Combine original caption text and watch link
     caption_text = (
-        f"Original Caption: {display_original_caption}\n\n"
-        f"{title_line}\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"🎥 Type: {type_display}\n"
-        f"🌍 Country: {country_display}\n"
-        f"🗣️ Language: {langs_str}\n"
-        f"🎭 Genre: {genres_str}\n"
-        f"📺 Quality: {quality_display}\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"{raw_caption}\n\n"
         f"🎬 Watch Here 👇\n"
-        f"{diskwala_link}\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"{hashtags_str}"
+        f"{diskwala_link}"
     )
 
     thumb_path = None

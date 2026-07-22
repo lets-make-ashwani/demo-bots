@@ -1,0 +1,23 @@
+services:
+  - type: worker
+    name: ai-assistant-bot
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python run.py
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: MONGODB_URI
+        fromDatabase:
+          name: ai-assistant-db
+          property: connectionString
+      - key: BOT_TOKEN
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        value: llama-3.3-70b-versatile
+
+databases:
+  - name: ai-assistant-db
+    plan: free
