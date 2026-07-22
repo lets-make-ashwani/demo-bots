@@ -31,7 +31,6 @@ pyrogram.utils.MAX_USER_ID = 99999999999999
 
 from pyrogram import Client, idle
 from pyrogram.errors import FloodWait, FileReferenceExpired
-from PIL import Image, ImageEnhance
 
 # Load environment variables
 load_dotenv(override=True)
@@ -138,32 +137,6 @@ async def resolve_chat_id(app: Client, chat_value: str) -> int:
             f"Please verify you have joined the channel or that the username/invite link is correct."
         )
 
-# ================= THUMBNAIL ENHANCER =================
-def enhance_thumbnail(input_path: str, output_path: str):
-    try:
-        img = Image.open(input_path)
-
-        # 1. Upscale (2x)
-        width, height = img.size
-        img = img.resize((width * 2, height * 2), Image.Resampling.LANCZOS)
-
-        # 2. Enhance sharpness
-        img = ImageEnhance.Sharpness(img).enhance(1.8)
-
-        # 3. Enhance color
-        img = ImageEnhance.Color(img).enhance(1.3)
-
-        # 4. Enhance contrast
-        img = ImageEnhance.Contrast(img).enhance(1.2)
-
-        # 5. Brightness adjustment
-        img = ImageEnhance.Brightness(img).enhance(1.1)
-
-        img.save(output_path, quality=95)
-        return True
-    except Exception as e:
-        print(f"[x] Pillow enhancement failed: {e}")
-        return False
 
 
 async def process_and_publish_post(app: Client, target_chat_id: int, original_msg, diskwala_link: str, reply_msg_id: int):
@@ -203,10 +176,9 @@ async def process_and_publish_post(app: Client, target_chat_id: int, original_ms
     )
 
     thumb_path = None
-    enhanced_thumb_path = None
     media_obj = original_msg.video or original_msg.document
 
-    # Attempt to download and enhance the thumbnail
+    # Attempt to download the raw thumbnail
     if media_obj and media_obj.thumbs:
         print("[-] Downloading video thumbnail...")
         try:
@@ -215,11 +187,6 @@ async def process_and_publish_post(app: Client, target_chat_id: int, original_ms
             
             # Pass the Thumbnail object directly to download cleanly
             thumb_path = await app.download_media(media_obj.thumbs[0], file_name=raw_path)
-            
-            if thumb_path and os.path.exists(thumb_path):
-                enhanced_path = f"temp_thumbs/enhanced_{original_msg.id}.jpg"
-                if enhance_thumbnail(thumb_path, enhanced_path):
-                    enhanced_thumb_path = enhanced_path
         except FileReferenceExpired:
             print("[-] File reference expired on thumbnail download. Attempting refetch...")
             try:
@@ -227,10 +194,6 @@ async def process_and_publish_post(app: Client, target_chat_id: int, original_ms
                 new_media = fresh_msg.video or fresh_msg.document
                 if new_media and new_media.thumbs:
                     thumb_path = await app.download_media(new_media.thumbs[0], file_name=raw_path)
-                    if thumb_path and os.path.exists(thumb_path):
-                        enhanced_path = f"temp_thumbs/enhanced_{original_msg.id}.jpg"
-                        if enhance_thumbnail(thumb_path, enhanced_path):
-                            enhanced_thumb_path = enhanced_path
             except Exception as fe:
                 print(f"[!] Fallback download failed: {fe}")
         except Exception as e:
@@ -239,10 +202,10 @@ async def process_and_publish_post(app: Client, target_chat_id: int, original_ms
     # Publish compiled post to target channel
     print("[-] Publishing post to organized channel...")
     try:
-        if enhanced_thumb_path and os.path.exists(enhanced_thumb_path):
+        if thumb_path and os.path.exists(thumb_path):
             await app.send_photo(
                 chat_id=target_chat_id,
-                photo=enhanced_thumb_path,
+                photo=thumb_path,
                 caption=caption_text
             )
         else:
@@ -259,8 +222,6 @@ async def process_and_publish_post(app: Client, target_chat_id: int, original_ms
     try:
         if thumb_path and os.path.exists(thumb_path):
             os.remove(thumb_path)
-        if enhanced_thumb_path and os.path.exists(enhanced_thumb_path):
-            os.remove(enhanced_thumb_path)
     except Exception:
         pass
 

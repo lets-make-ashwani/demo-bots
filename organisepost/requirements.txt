@@ -1,6 +1,4 @@
 pyrogram
-pillow
-google-generativeai
 python-dotenv
 tgcrypto
 pymongo[srv]
