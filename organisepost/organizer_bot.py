@@ -279,7 +279,7 @@ async def run_organizer(app: Client, target_chat_id: int):
                             print(f"[!] Error fetching original message: {e}")
                             
                         # Cooldown between compiling/publishing posts
-                        sleep_seconds = random.randint(60, 120)
+                        sleep_seconds = random.randint(10, 30)
                         print(f"[-] Cooldown: sleeping for {sleep_seconds} seconds...")
                         await asyncio.sleep(sleep_seconds)
                 else:
