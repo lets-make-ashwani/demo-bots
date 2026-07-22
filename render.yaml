@@ -6,7 +6,7 @@ services:
     name: demo-panel
     runtime: python
     rootDir: panel
-    buildCommand: pip install -r requirements.txt -r ../scraper/requirements.txt -r ../pipeline/requirements.txt -r ../organisepost/requirements.txt
+    buildCommand: pip install -r requirements.txt -r ../scraper/requirements.txt -r ../pipeline/requirements.txt -r ../organisepost/requirements.txt -r ../ai-assistant/requirements.txt
     startCommand: uvicorn dashboard:app --host 0.0.0.0 --port $PORT
     plan: free
     envVars:
@@ -20,6 +20,8 @@ services:
       - key: API_HASH
         sync: false
       - key: MONGO_URI
+        sync: false
+      - key: BOT_TOKEN
         sync: false
 
       # Bot session strings
