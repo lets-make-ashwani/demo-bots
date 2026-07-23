@@ -139,6 +139,44 @@ async def resolve_chat_id(app: Client, chat_value: str) -> int:
 
 
 
+async def download_media_with_retry(app: Client, media, file_path: str, max_retries: int = 3) -> str:
+    # Remove any existing file at file_path to avoid old or 0-byte files
+    if os.path.exists(file_path):
+        try:
+            os.remove(file_path)
+        except Exception:
+            pass
+
+    for attempt in range(max_retries):
+        try:
+            path = await app.download_media(media, file_name=file_path)
+            if path and os.path.exists(path) and os.path.getsize(path) > 0:
+                return path
+            else:
+                print(f"[!] Downloaded file is empty or missing: {path}")
+                if path and os.path.exists(path):
+                    try:
+                        os.remove(path)
+                    except Exception:
+                        pass
+        except FloodWait as fe:
+            wait_time = fe.value + 2
+            print(f"[!] FloodWait during media download. Waiting for {wait_time} seconds before retrying...")
+            await asyncio.sleep(wait_time)
+        except FileReferenceExpired:
+            # Let FileReferenceExpired bubble up so the caller can refetch the message/media
+            raise
+        except Exception as e:
+            print(f"[!] Download attempt {attempt + 1} failed: {e}")
+            if os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                except Exception:
+                    pass
+            await asyncio.sleep(2)
+    return None
+
+
 async def process_and_publish_post(app: Client, target_chat_id: int, original_msg, diskwala_link: str, reply_msg):
     reply_msg_id = reply_msg.id
 
@@ -200,42 +238,27 @@ async def process_and_publish_post(app: Client, target_chat_id: int, original_ms
     # 1. Attempt to download from reply_msg.web_page.photo first (link preview)
     if reply_msg.web_page and reply_msg.web_page.photo:
         print("[-] Downloading thumbnail from DiskWala link preview...")
-        try:
-            thumb_path = await app.download_media(reply_msg.web_page.photo, file_name=raw_path)
-        except Exception as we:
-            print(f"[!] Link preview download failed: {we}")
+        thumb_path = await download_media_with_retry(app, reply_msg.web_page.photo, file_path=raw_path)
 
     # 2. Attempt to download from reply_msg.animation.thumbs[0] (GIF/Animation)
     if not thumb_path and getattr(reply_msg, "animation", None) and reply_msg.animation.thumbs:
         print("[-] Downloading thumbnail from DiskWala GIF/animation reply...")
-        try:
-            thumb_path = await app.download_media(reply_msg.animation.thumbs[0], file_name=raw_path)
-        except Exception as ae:
-            print(f"[!] GIF thumbnail download failed: {ae}")
+        thumb_path = await download_media_with_retry(app, reply_msg.animation.thumbs[0], file_path=raw_path)
 
     # 3. Attempt to download from reply_msg.photo (Photo)
     if not thumb_path and getattr(reply_msg, "photo", None):
         print("[-] Downloading thumbnail from DiskWala photo reply...")
-        try:
-            thumb_path = await app.download_media(reply_msg.photo, file_name=raw_path)
-        except Exception as pe:
-            print(f"[!] Photo download failed: {pe}")
+        thumb_path = await download_media_with_retry(app, reply_msg.photo, file_path=raw_path)
 
     # 4. Attempt to download from reply_msg.video.thumbs[0] (Video)
     if not thumb_path and getattr(reply_msg, "video", None) and reply_msg.video.thumbs:
         print("[-] Downloading thumbnail from DiskWala video reply...")
-        try:
-            thumb_path = await app.download_media(reply_msg.video.thumbs[0], file_name=raw_path)
-        except Exception as ve:
-            print(f"[!] Video thumbnail download failed: {ve}")
+        thumb_path = await download_media_with_retry(app, reply_msg.video.thumbs[0], file_path=raw_path)
 
     # 5. Attempt to download from reply_msg.document.thumbs[0] (Document)
     if not thumb_path and getattr(reply_msg, "document", None) and reply_msg.document.thumbs:
         print("[-] Downloading thumbnail from DiskWala document reply...")
-        try:
-            thumb_path = await app.download_media(reply_msg.document.thumbs[0], file_name=raw_path)
-        except Exception as de:
-            print(f"[!] Document thumbnail download failed: {de}")
+        thumb_path = await download_media_with_retry(app, reply_msg.document.thumbs[0], file_path=raw_path)
 
     # Fallback to original message's thumbnail if link preview and media download failed or weren't available
     if not thumb_path and is_original_msg_valid:
@@ -244,14 +267,14 @@ async def process_and_publish_post(app: Client, target_chat_id: int, original_ms
             print("[-] Downloading video thumbnail from original file...")
             try:
                 # Pass the Thumbnail object directly to download cleanly
-                thumb_path = await app.download_media(media_obj.thumbs[0], file_name=raw_path)
+                thumb_path = await download_media_with_retry(app, media_obj.thumbs[0], file_path=raw_path)
             except FileReferenceExpired:
                 print("[-] File reference expired on thumbnail download. Attempting refetch...")
                 try:
                     fresh_msg = await app.get_messages(original_msg.chat.id, original_msg.id)
                     new_media = fresh_msg.video or fresh_msg.document
                     if new_media and new_media.thumbs:
-                        thumb_path = await app.download_media(new_media.thumbs[0], file_name=raw_path)
+                        thumb_path = await download_media_with_retry(app, new_media.thumbs[0], file_path=raw_path)
                 except Exception as fe:
                     print(f"[!] Fallback download failed: {fe}")
             except Exception as e:
@@ -260,13 +283,14 @@ async def process_and_publish_post(app: Client, target_chat_id: int, original_ms
     # Publish compiled post to target channel
     print("[-] Publishing post to organized channel...")
     try:
-        if thumb_path and os.path.exists(thumb_path):
+        if thumb_path and os.path.exists(thumb_path) and os.path.getsize(thumb_path) > 0:
             await app.send_photo(
                 chat_id=target_chat_id,
                 photo=thumb_path,
                 caption=caption_text
             )
         else:
+            print("[!] No valid thumbnail found. Publishing post text only...")
             await app.send_message(
                 chat_id=target_chat_id,
                 text=caption_text
@@ -293,7 +317,7 @@ async def run_organizer(app: Client, target_chat_id: int):
                 
                 # Fetch recent messages from DiskWala bot
                 diskwala_history = []
-                async for msg in app.get_chat_history(TARGET_BOT_USERNAME):
+                async for msg in app.get_chat_history(TARGET_BOT_USERNAME, limit=50):
                     # We are looking for messages sent by DiskWala (incoming replies)
                     # and that contain a download/watch URL
                     if msg.from_user and msg.from_user.is_bot:
