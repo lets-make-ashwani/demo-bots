@@ -315,17 +315,43 @@ async def run_organizer(app: Client, target_chat_id: int):
             try:
                 print("[-] Scanning DiskWala Bot chat history...")
                 
-                # Fetch recent messages from DiskWala bot
                 diskwala_history = []
-                async for msg in app.get_chat_history(TARGET_BOT_USERNAME, limit=50):
-                    # We are looking for messages sent by DiskWala (incoming replies)
-                    # and that contain a download/watch URL
-                    if msg.from_user and msg.from_user.is_bot:
-                        text = msg.text or msg.caption or ""
-                        # Regex match for DiskWala links
-                        match = re.search(r'(https?://(?:www\.)?diskwala\.com/app/[a-zA-Z0-9]+)', text)
-                        if match:
-                            diskwala_history.append((msg, match.group(1)))
+                offset_id = 0
+                limit = 50
+                
+                while True:
+                    chunk = []
+                    async for msg in app.get_chat_history(TARGET_BOT_USERNAME, limit=limit, offset_id=offset_id):
+                        chunk.append(msg)
+                        
+                    if not chunk:
+                        break
+                        
+                    # Prepare offset for the next page fetch
+                    offset_id = chunk[-1].id
+                    
+                    unprocessed_in_chunk = 0
+                    links_in_chunk = 0
+                    
+                    for msg in chunk:
+                        if msg.from_user and msg.from_user.is_bot:
+                            text = msg.text or msg.caption or ""
+                            # Regex match for DiskWala links
+                            match = re.search(r'(https?://(?:www\.)?diskwala\.com/app/[a-zA-Z0-9]+)', text)
+                            if match:
+                                links_in_chunk += 1
+                                if not is_already_processed(msg.id):
+                                    diskwala_history.append((msg, match.group(1)))
+                                    unprocessed_in_chunk += 1
+                                    
+                    # If this chunk contained DiskWala link replies, but ALL of them
+                    # were already processed, we can safely stop scanning backward.
+                    if links_in_chunk > 0 and unprocessed_in_chunk == 0:
+                        print("[-] Reached history page where all links are already processed. Stopping scan.")
+                        break
+                        
+                    if len(chunk) < limit:
+                        break
 
                 if diskwala_history:
                     # Reverse order to process from OLDEST to NEWEST
@@ -368,7 +394,7 @@ async def run_organizer(app: Client, target_chat_id: int):
                         print(f"[-] Cooldown: sleeping for {sleep_seconds} seconds...")
                         await asyncio.sleep(sleep_seconds)
                 else:
-                    print("[+] No messages found in history scan.")
+                    print("[+] No new messages found in history scan.")
                     
             except Exception as cycle_error:
                 print(f"[x] Error during scan cycle: {cycle_error}. Retrying in 30 seconds...")
