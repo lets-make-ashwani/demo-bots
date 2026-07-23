@@ -149,21 +149,35 @@ async def download_media_with_retry(app: Client, media, file_path: str, max_retr
 
     for attempt in range(max_retries):
         try:
-            path = await app.download_media(media, file_name=file_path)
-            if path and os.path.exists(path) and os.path.getsize(path) > 0:
-                return path
+            # Use stream_media so exceptions propagate directly to us instead of returning None
+            with open(file_path, "wb") as f:
+                async for chunk in app.stream_media(media):
+                    f.write(chunk)
+
+            if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+                return file_path
             else:
-                print(f"[!] Downloaded file is empty or missing: {path}")
-                if path and os.path.exists(path):
+                print(f"[!] Downloaded file is empty or missing.")
+                if os.path.exists(file_path):
                     try:
-                        os.remove(path)
+                        os.remove(file_path)
                     except Exception:
                         pass
         except FloodWait as fe:
             wait_time = fe.value + 2
             print(f"[!] FloodWait during media download. Waiting for {wait_time} seconds before retrying...")
+            if os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                except Exception:
+                    pass
             await asyncio.sleep(wait_time)
         except FileReferenceExpired:
+            if os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                except Exception:
+                    pass
             # Let FileReferenceExpired bubble up so the caller can refetch the message/media
             raise
         except Exception as e:
