@@ -235,33 +235,8 @@ async def process_and_publish_post(app: Client, target_chat_id: int, original_ms
     os.makedirs("temp_thumbs", exist_ok=True)
     raw_path = f"temp_thumbs/raw_{reply_msg_id}.jpg"
 
-    # 1. Attempt to download from reply_msg.web_page.photo first (link preview)
-    if reply_msg.web_page and reply_msg.web_page.photo:
-        print("[-] Downloading thumbnail from DiskWala link preview...")
-        thumb_path = await download_media_with_retry(app, reply_msg.web_page.photo, file_path=raw_path)
-
-    # 2. Attempt to download from reply_msg.animation.thumbs[0] (GIF/Animation)
-    if not thumb_path and getattr(reply_msg, "animation", None) and reply_msg.animation.thumbs:
-        print("[-] Downloading thumbnail from DiskWala GIF/animation reply...")
-        thumb_path = await download_media_with_retry(app, reply_msg.animation.thumbs[0], file_path=raw_path)
-
-    # 3. Attempt to download from reply_msg.photo (Photo)
-    if not thumb_path and getattr(reply_msg, "photo", None):
-        print("[-] Downloading thumbnail from DiskWala photo reply...")
-        thumb_path = await download_media_with_retry(app, reply_msg.photo, file_path=raw_path)
-
-    # 4. Attempt to download from reply_msg.video.thumbs[0] (Video)
-    if not thumb_path and getattr(reply_msg, "video", None) and reply_msg.video.thumbs:
-        print("[-] Downloading thumbnail from DiskWala video reply...")
-        thumb_path = await download_media_with_retry(app, reply_msg.video.thumbs[0], file_path=raw_path)
-
-    # 5. Attempt to download from reply_msg.document.thumbs[0] (Document)
-    if not thumb_path and getattr(reply_msg, "document", None) and reply_msg.document.thumbs:
-        print("[-] Downloading thumbnail from DiskWala document reply...")
-        thumb_path = await download_media_with_retry(app, reply_msg.document.thumbs[0], file_path=raw_path)
-
-    # Fallback to original message's thumbnail if link preview and media download failed or weren't available
-    if not thumb_path and is_original_msg_valid:
+    # 1. Primary Source: Attempt to download from the original message's video or document thumbnail
+    if is_original_msg_valid:
         media_obj = original_msg.video or original_msg.document
         if media_obj and media_obj.thumbs:
             print("[-] Downloading video thumbnail from original file...")
@@ -279,6 +254,44 @@ async def process_and_publish_post(app: Client, target_chat_id: int, original_ms
                     print(f"[!] Fallback download failed: {fe}")
             except Exception as e:
                 print(f"[!] Thumbnail processing failed: {e}")
+
+            # If the download failed (returned None/False without raising an exception), retry after refetching
+            if not thumb_path:
+                print("[-] Video thumbnail download returned None. Attempting refetch...")
+                try:
+                    fresh_msg = await app.get_messages(original_msg.chat.id, original_msg.id)
+                    new_media = fresh_msg.video or fresh_msg.document
+                    if new_media and new_media.thumbs:
+                        thumb_path = await download_media_with_retry(app, new_media.thumbs[0], file_path=raw_path)
+                except Exception as fe:
+                    print(f"[!] Refetch download failed: {fe}")
+
+    # 2. Fallbacks: Attempt to download from DiskWala reply message details if primary thumbnail was not found
+    if not thumb_path:
+        # Attempt to download from reply_msg.web_page.photo (link preview)
+        if reply_msg.web_page and reply_msg.web_page.photo:
+            print("[-] Downloading thumbnail from DiskWala link preview fallback...")
+            thumb_path = await download_media_with_retry(app, reply_msg.web_page.photo, file_path=raw_path)
+
+        # Attempt to download from reply_msg.animation.thumbs[0] (GIF/Animation)
+        if not thumb_path and getattr(reply_msg, "animation", None) and reply_msg.animation.thumbs:
+            print("[-] Downloading thumbnail from DiskWala GIF/animation reply fallback...")
+            thumb_path = await download_media_with_retry(app, reply_msg.animation.thumbs[0], file_path=raw_path)
+
+        # Attempt to download from reply_msg.photo (Photo)
+        if not thumb_path and getattr(reply_msg, "photo", None):
+            print("[-] Downloading thumbnail from DiskWala photo reply fallback...")
+            thumb_path = await download_media_with_retry(app, reply_msg.photo, file_path=raw_path)
+
+        # Attempt to download from reply_msg.video.thumbs[0] (Video)
+        if not thumb_path and getattr(reply_msg, "video", None) and reply_msg.video.thumbs:
+            print("[-] Downloading thumbnail from DiskWala video reply fallback...")
+            thumb_path = await download_media_with_retry(app, reply_msg.video.thumbs[0], file_path=raw_path)
+
+        # Attempt to download from reply_msg.document.thumbs[0] (Document)
+        if not thumb_path and getattr(reply_msg, "document", None) and reply_msg.document.thumbs:
+            print("[-] Downloading thumbnail from DiskWala document reply fallback...")
+            thumb_path = await download_media_with_retry(app, reply_msg.document.thumbs[0], file_path=raw_path)
 
     # Publish compiled post to target channel
     print("[-] Publishing post to organized channel...")
