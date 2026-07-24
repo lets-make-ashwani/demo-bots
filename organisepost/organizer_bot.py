@@ -29,8 +29,26 @@ pyrogram.utils.MAX_CHANNEL_ID = -1000000000000
 pyrogram.utils.MIN_CHAT_ID = -99999999999999
 pyrogram.utils.MAX_USER_ID = 99999999999999
 
+import logging
 from pyrogram import Client, idle
 from pyrogram.errors import FloodWait, FileReferenceExpired
+
+# Shared mutable state for tracking exceptions logged internally by Pyrogram
+global_flood_wait_seconds = [0]
+global_file_reference_expired = [False]
+
+class PyrogramExceptionTracker(logging.Handler):
+    def emit(self, record):
+        if record.exc_info:
+            exc_type, exc_value, traceback = record.exc_info
+            if exc_value:
+                if isinstance(exc_value, FloodWait):
+                    global_flood_wait_seconds[0] = exc_value.value
+                elif isinstance(exc_value, FileReferenceExpired):
+                    global_file_reference_expired[0] = True
+
+# Add tracker handler to Pyrogram's logger to catch swallowed exceptions
+logging.getLogger("pyrogram").addHandler(PyrogramExceptionTracker())
 
 # Load environment variables
 load_dotenv(override=True)
@@ -148,46 +166,57 @@ async def download_media_with_retry(app: Client, media, file_path: str, max_retr
             pass
 
     for attempt in range(max_retries):
-        try:
-            # Use stream_media so exceptions propagate directly to us instead of returning None
-            with open(file_path, "wb") as f:
-                async for chunk in app.stream_media(media):
-                    f.write(chunk)
+        # Reset tracker state before each attempt
+        global_flood_wait_seconds[0] = 0
+        global_file_reference_expired[0] = False
 
-            if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
-                return file_path
-            else:
-                print(f"[!] Downloaded file is empty or missing.")
-                if os.path.exists(file_path):
-                    try:
-                        os.remove(file_path)
-                    except Exception:
-                        pass
-        except FloodWait as fe:
-            wait_time = fe.value + 2
-            print(f"[!] FloodWait during media download. Waiting for {wait_time} seconds before retrying...")
+        try:
+            # Use Pyrogram's native download_media for robustness, but intercept errors via tracker
+            path = await app.download_media(media, file_name=file_path)
+            
+            if path and os.path.exists(path) and os.path.getsize(path) > 0:
+                return path
+        except Exception as e:
+            # Catch direct exceptions just in case
+            if isinstance(e, FloodWait):
+                global_flood_wait_seconds[0] = e.value
+            elif isinstance(e, FileReferenceExpired):
+                global_file_reference_expired[0] = True
+            print(f"[!] Exception raised directly: {e}")
+
+        # Check if the logger captured a FloodWait internally
+        if global_flood_wait_seconds[0] > 0:
+            wait_time = global_flood_wait_seconds[0] + 5
+            print(f"[!] FloodWait detected. Waiting for {wait_time} seconds before retrying...")
             if os.path.exists(file_path):
                 try:
                     os.remove(file_path)
                 except Exception:
                     pass
             await asyncio.sleep(wait_time)
-        except FileReferenceExpired:
+            # Reset tracker wait time
+            global_flood_wait_seconds[0] = 0
+            continue
+
+        # Check if the logger captured a FileReferenceExpired internally
+        if global_file_reference_expired[0]:
+            print("[!] FileReferenceExpired detected.")
             if os.path.exists(file_path):
                 try:
                     os.remove(file_path)
                 except Exception:
                     pass
             # Let FileReferenceExpired bubble up so the caller can refetch the message/media
-            raise
-        except Exception as e:
-            print(f"[!] Download attempt {attempt + 1} failed: {e}")
-            if os.path.exists(file_path):
-                try:
-                    os.remove(file_path)
-                except Exception:
-                    pass
-            await asyncio.sleep(2)
+            raise FileReferenceExpired(None)
+
+        print(f"[!] Downloaded file is empty or missing.")
+        if os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+            except Exception:
+                pass
+        await asyncio.sleep(2)
+
     return None
 
 
