@@ -49,6 +49,11 @@ SESSIONS = [
         "session_file": os.path.join("organisepost", "organizer_session"),
         "env_var": "SESSION_STRING  (for demo-organiser on Render)"
     },
+    {
+        "name": "All DiskWala Post Bot",
+        "session_file": os.path.join("alldiskwalapost", "alldiskwalapost_session"),
+        "env_var": "SESSION_STRING  (for demo-alldiskwalapost on Render)"
+    },
 ]
 
 

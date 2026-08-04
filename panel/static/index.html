@@ -195,6 +195,50 @@
                     </div>
                 </div>
             </section>
+
+            <!-- ALL DISKWALA POST BOT CARD -->
+            <section class="bot-card" id="card-alldiskwalapost">
+                <div class="card-header">
+                    <div class="bot-info">
+                        <h2>All DiskWala Post Bot</h2>
+                        <p class="description">Scrapes, cleans with Groq, and posts to diskwalapost</p>
+                    </div>
+                    <div class="status-badge stopped">
+                        <span class="status-dot"></span>
+                        <span class="status-text">Stopped</span>
+                    </div>
+                </div>
+                
+                <div class="metrics-row">
+                    <div class="metric">
+                        <span class="metric-label">Memory</span>
+                        <span class="metric-val" id="mem-alldiskwalapost">0.0 MB</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-label">CPU</span>
+                        <span class="metric-val" id="cpu-alldiskwalapost">0.0%</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-label">Log Size</span>
+                        <span class="metric-val" id="log-alldiskwalapost">0.0 KB</span>
+                    </div>
+                </div>
+
+                <div class="controls-row">
+                    <button class="btn btn-start" onclick="startBot('alldiskwalapost')">Start Bot</button>
+                    <button class="btn btn-stop" disabled onclick="stopBot('alldiskwalapost')">Stop Bot</button>
+                </div>
+
+                <div class="terminal-container">
+                    <div class="terminal-header">
+                        <span>Terminal Output</span>
+                        <button class="btn-clear" onclick="clearTerminal('alldiskwalapost')">Clear</button>
+                    </div>
+                    <div class="terminal-body" id="term-alldiskwalapost">
+                        <div class="log-line system">Waiting for process startup...</div>
+                    </div>
+                </div>
+            </section>
         </main>
     </div>
 

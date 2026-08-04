@@ -3,7 +3,8 @@ const sockets = {
     scraper: null,
     pipeline: null,
     organizer: null,
-    ai_assistant: null
+    ai_assistant: null,
+    alldiskwalapost: null
 };
 
 // Periodic polling interval handle

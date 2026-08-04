@@ -6,7 +6,7 @@ services:
     name: demo-panel
     runtime: python
     rootDir: panel
-    buildCommand: pip install -r requirements.txt -r ../scraper/requirements.txt -r ../pipeline/requirements.txt -r ../organisepost/requirements.txt -r ../ai-assistant/requirements.txt
+    buildCommand: pip install -r requirements.txt -r ../scraper/requirements.txt -r ../pipeline/requirements.txt -r ../organisepost/requirements.txt -r ../ai-assistant/requirements.txt -r ../alldiskwalapost/requirements.txt
     startCommand: uvicorn dashboard:app --host 0.0.0.0 --port $PORT
     plan: free
     envVars:
@@ -32,6 +32,8 @@ services:
       - key: SESSION_STRING_PIPELINE
         sync: false
       - key: SESSION_STRING_ORGANIZER
+        sync: false
+      - key: SESSION_STRING_ALLDISKWALAPOST
         sync: false
 
       # Scraper Bot configurations
@@ -60,4 +62,10 @@ services:
       - key: TARGET_CHAT_ORGANIZER
         sync: false
       - key: GEMINI_API_KEY
+        sync: false
+
+      # All DiskWala Post Bot configurations
+      - key: SOURCE_CHAT_ALLDISKWALAPOST
+        sync: false
+      - key: TARGET_CHAT_ALLDISKWALAPOST
         sync: false

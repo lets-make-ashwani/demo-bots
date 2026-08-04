@@ -125,6 +125,14 @@ BOTS_REGISTRY = {
         "cwd": os.path.join(BASE_DIR, "ai-assistant"),
         "log_file": os.path.join(LOGS_DIR, "ai_assistant.log"),
         "process": None
+    },
+    "alldiskwalapost": {
+        "name": "All DiskWala Post Bot",
+        "description": "Scrapes organisepost, cleans metadata with Groq, and posts to diskwalapost",
+        "script": os.path.join(BASE_DIR, "alldiskwalapost", "alldiskwalapost_bot.py"),
+        "cwd": os.path.join(BASE_DIR, "alldiskwalapost"),
+        "log_file": os.path.join(LOGS_DIR, "alldiskwalapost.log"),
+        "process": None
     }
 }
 
