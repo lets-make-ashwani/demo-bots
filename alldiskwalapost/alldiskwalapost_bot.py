@@ -31,8 +31,7 @@ pyrogram.utils.MAX_USER_ID = 99999999999999
 from pyrogram import Client, idle
 from pyrogram.errors import FloodWait, FileReferenceExpired
 from pymongo import MongoClient
-from google import genai
-from google.genai import types
+import requests
 
 # Load environment variables
 load_dotenv(override=True)
@@ -159,22 +158,43 @@ def extract_metadata_via_gemini(caption_text: str) -> str:
     max_attempts = 5
     while attempt < max_attempts:
         try:
-            client = genai.Client(api_key=GEMINI_API_KEY)
-            response = client.models.generate_content(
-                model='gemini-2.5-flash',
-                contents=caption_text,
-                config=types.GenerateContentConfig(
-                    system_instruction=SYSTEM_PROMPT,
-                    temperature=0.1
-                )
-            )
-            return response.text.strip()
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
+            headers = {"Content-Type": "application/json"}
+            payload = {
+                "systemInstruction": {
+                    "parts": [
+                        {"text": SYSTEM_PROMPT}
+                    ]
+                },
+                "contents": [
+                    {
+                        "parts": [
+                            {"text": caption_text}
+                        ]
+                    }
+                ],
+                "generationConfig": {
+                    "temperature": 0.1
+                }
+            }
+            
+            response = requests.post(url, json=payload, headers=headers)
+            if response.status_code != 200:
+                raise RuntimeError(f"HTTP Error {response.status_code}: {response.text}")
+                
+            data = response.json()
+            try:
+                result_text = data['candidates'][0]['content']['parts'][0]['text']
+                return result_text.strip()
+            except (KeyError, IndexError) as parse_err:
+                raise RuntimeError(f"Failed to parse API response: {data}. Error: {parse_err}")
+                
         except Exception as e:
             err_str = str(e)
             wait_time = random.randint(60, 300)  # Default: wait 1 to 5 minutes
             
             # Check for Rate Limit 429 to extract exact wait time if possible
-            if "rate_limit" in err_str.lower() or "429" in err_str or "rate limit" in err_str.lower():
+            if "rate_limit" in err_str.lower() or "429" in err_str or "rate limit" in err_str.lower() or "quota" in err_str.lower():
                 match = re.search(r'try again in (?:(\d+)m)?([\d.]+)s', err_str)
                 if match:
                     mins = int(match.group(1)) if match.group(1) else 0

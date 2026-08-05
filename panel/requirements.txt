@@ -4,4 +4,4 @@ psutil
 websockets
 jinja2
 python-dotenv
-google-genai>=1.0.0
+requests>=2.20.0
