@@ -31,7 +31,8 @@ pyrogram.utils.MAX_USER_ID = 99999999999999
 from pyrogram import Client, idle
 from pyrogram.errors import FloodWait, FileReferenceExpired
 from pymongo import MongoClient
-from groq import Groq
+from google import genai
+from google.genai import types
 
 # Load environment variables
 load_dotenv(override=True)
@@ -47,11 +48,10 @@ MONGO_URI = os.getenv("MONGO_URI", "").strip()
 COOLDOWN = int(os.getenv("COOLDOWN_BETWEEN_POSTS", "15"))
 SCAN_COOLDOWN = int(os.getenv("SCAN_COOLDOWN", "300"))
 
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
-GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile").strip()
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 
-# ================= SYSTEM PROMPT FOR GROQ =================
-GROQ_SYSTEM_PROMPT = """You are a precise metadata extraction assistant for movie and web-series files. 
+# ================= SYSTEM PROMPT FOR GEMINI =================
+SYSTEM_PROMPT = """You are a precise metadata extraction assistant for movie and web-series files. 
 Your task is to analyze the raw Telegram caption provided by the user, extract the key metadata, and output it in a clean, structured list.
 
 Follow these strict rules:
@@ -149,27 +149,26 @@ async def resolve_chat_id(app: Client, chat_value: str) -> int:
             f"Please verify you have joined the channel or that the username/invite link is correct."
         )
 
-# ================= GROQ API METADATA EXTRACTOR =================
-def extract_metadata_via_groq(caption_text: str) -> str:
-    if not GROQ_API_KEY:
-        print("[ERROR] GROQ_API_KEY is missing from .env.")
-        raise ValueError("GROQ_API_KEY is missing")
+# ================= GEMINI API METADATA EXTRACTOR =================
+def extract_metadata_via_gemini(caption_text: str) -> str:
+    if not GEMINI_API_KEY:
+        print("[ERROR] GEMINI_API_KEY is missing from .env.")
+        raise ValueError("GEMINI_API_KEY is missing")
     
     attempt = 0
     max_attempts = 5
     while attempt < max_attempts:
         try:
-            groq_client = Groq(api_key=GROQ_API_KEY)
-            chat_completion = groq_client.chat.completions.create(
-                messages=[
-                    {"role": "system", "content": GROQ_SYSTEM_PROMPT},
-                    {"role": "user", "content": caption_text}
-                ],
-                model=GROQ_MODEL,
-                temperature=0.1  # Low temperature for highly precise output
+            client = genai.Client(api_key=GEMINI_API_KEY)
+            response = client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=caption_text,
+                config=types.GenerateContentConfig(
+                    system_instruction=SYSTEM_PROMPT,
+                    temperature=0.1
+                )
             )
-            result = chat_completion.choices[0].message.content
-            return result.strip()
+            return response.text.strip()
         except Exception as e:
             err_str = str(e)
             wait_time = random.randint(60, 300)  # Default: wait 1 to 5 minutes
@@ -182,12 +181,12 @@ def extract_metadata_via_groq(caption_text: str) -> str:
                     secs = float(match.group(2))
                     wait_time = int(mins * 60 + secs) + 5  # Add 5s safety buffer
                 
-            print(f"[!] Groq API error occurred: {e}")
+            print(f"[!] Gemini API error occurred: {e}")
             print(f"[!] Waiting for {wait_time}s (approx {wait_time/60:.1f} mins) before retrying {attempt + 1}/{max_attempts}...")
             time.sleep(wait_time)
             attempt += 1
     
-    raise RuntimeError("Max retries exceeded for Groq API call.")
+    raise RuntimeError("Max retries exceeded for Gemini API call.")
 
 # ================= PHOTO DOWNLOAD HELPER (REFETCH IF EXPIRED) =================
 async def download_photo_with_refetch(app: Client, source_chat_id: int, msg, temp_file: str) -> str | None:
@@ -255,14 +254,14 @@ async def process_message(app: Client, msg, source_chat_id: int, target_chat_id:
     diskwala_link = diskwala_match.group(1)
     print(f"[-] Extracted DiskWala Link: {diskwala_link}")
     
-    # Call Groq to extract metadata
-    print("[-] Sending caption to Groq for metadata extraction...")
-    metadata_output = extract_metadata_via_groq(raw_caption)
+    # Call Gemini to extract metadata
+    print("[-] Sending caption to Gemini for metadata extraction...")
+    metadata_output = extract_metadata_via_gemini(raw_caption)
     
     if not metadata_output:
-        raise RuntimeError("Groq metadata extraction returned empty output.")
+        raise RuntimeError("Gemini metadata extraction returned empty output.")
 
-    print(f"[-] Groq API Response:\n---\n{metadata_output}\n---")
+    print(f"[-] Gemini API Response:\n---\n{metadata_output}\n---")
 
     # Verify that the link is present in the output. If not, append it.
     if diskwala_link not in metadata_output:
