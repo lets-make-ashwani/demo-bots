@@ -172,23 +172,22 @@ def extract_metadata_via_groq(caption_text: str) -> str:
             return result.strip()
         except Exception as e:
             err_str = str(e)
+            wait_time = random.randint(60, 300)  # Default: wait 1 to 5 minutes
+            
+            # Check for Rate Limit 429 to extract exact wait time if possible
             if "rate_limit" in err_str.lower() or "429" in err_str or "rate limit" in err_str.lower():
-                wait_time = 60  # default
-                # Extract wait time from error message: "Please try again in 1m30.72s."
                 match = re.search(r'try again in (?:(\d+)m)?([\d.]+)s', err_str)
                 if match:
                     mins = int(match.group(1)) if match.group(1) else 0
                     secs = float(match.group(2))
                     wait_time = int(mins * 60 + secs) + 5  # Add 5s safety buffer
                 
-                print(f"[!] Groq Rate Limit (429) hit. Sleeping for {wait_time}s before retry {attempt + 1}/{max_attempts}...")
-                time.sleep(wait_time)
-                attempt += 1
-            else:
-                print(f"[x] Groq API call failed: {e}")
-                raise e
+            print(f"[!] Groq API error occurred: {e}")
+            print(f"[!] Waiting for {wait_time}s (approx {wait_time/60:.1f} mins) before retrying {attempt + 1}/{max_attempts}...")
+            time.sleep(wait_time)
+            attempt += 1
     
-    raise RuntimeError("Max retries exceeded for Groq API call due to Rate Limits.")
+    raise RuntimeError("Max retries exceeded for Groq API call.")
 
 # ================= PHOTO DOWNLOAD HELPER (REFETCH IF EXPIRED) =================
 async def download_photo_with_refetch(app: Client, source_chat_id: int, msg, temp_file: str) -> str | None:
@@ -283,12 +282,28 @@ async def process_message(app: Client, msg, source_chat_id: int, target_chat_id:
     # Post to Target Channel
     try:
         if thumb_path and os.path.exists(thumb_path):
-            print("[-] Publishing post with photo to target channel...")
-            await app.send_photo(
-                chat_id=target_chat_id,
-                photo=thumb_path,
-                caption=metadata_output
-            )
+            try:
+                print("[-] Publishing post with photo to target channel...")
+                await app.send_photo(
+                    chat_id=target_chat_id,
+                    photo=thumb_path,
+                    caption=metadata_output
+                )
+            except Exception as photo_err:
+                print(f"[!] Photo publishing failed: {photo_err}. Falling back to text-only...")
+                # Delete the failed photo file
+                try:
+                    os.remove(thumb_path)
+                except Exception:
+                    pass
+                thumb_path = None
+                
+                # Retry as text-only
+                print("[-] Publishing text-only fallback to target channel...")
+                await app.send_message(
+                    chat_id=target_chat_id,
+                    text=metadata_output
+                )
         else:
             print("[-] Publishing text-only post to target channel...")
             await app.send_message(
@@ -301,9 +316,12 @@ async def process_message(app: Client, msg, source_chat_id: int, target_chat_id:
         print(f"[!] FloodWait in publishing. Sleeping for {fw.value} seconds...")
         await asyncio.sleep(fw.value)
         # Retry once
-        if thumb_path and os.path.exists(thumb_path):
-            await app.send_photo(chat_id=target_chat_id, photo=thumb_path, caption=metadata_output)
-        else:
+        try:
+            if thumb_path and os.path.exists(thumb_path):
+                await app.send_photo(chat_id=target_chat_id, photo=thumb_path, caption=metadata_output)
+            else:
+                await app.send_message(chat_id=target_chat_id, text=metadata_output)
+        except Exception:
             await app.send_message(chat_id=target_chat_id, text=metadata_output)
         print(f"[+] Post successfully published after FloodWait!")
         mark_as_processed(msg.id)
@@ -343,8 +361,11 @@ async def run_workflow(app: Client, source_chat_id: int, target_chat_id: int):
                     try:
                         await process_message(app, msg, source_chat_id, target_chat_id)
                         save_last_processed_id(msg.id)
-                        print(f"[-] Sleeping for {COOLDOWN} seconds cooldown...")
-                        await asyncio.sleep(COOLDOWN)
+                        
+                        # Take a random break between 60 and 100 seconds
+                        cooldown_sleep = random.randint(60, 100)
+                        print(f"[-] Sleeping for {cooldown_sleep} seconds cooldown...")
+                        await asyncio.sleep(cooldown_sleep)
                     except Exception as msg_err:
                         print(f"[!] Error processing message {msg.id}: {msg_err}")
                         print("[-] Pausing workflow due to processing failure. Will retry on next scan.")
