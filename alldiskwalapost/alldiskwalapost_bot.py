@@ -309,6 +309,7 @@ async def process_message(app: Client, msg, source_chat_id: int, target_chat_id:
         mark_as_processed(msg.id)
     except Exception as e:
         print(f"[x] Failed to publish post: {e}")
+        raise e
     finally:
         # Cleanup temp photo
         if thumb_path and os.path.exists(thumb_path):
