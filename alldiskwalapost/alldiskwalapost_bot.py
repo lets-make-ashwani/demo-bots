@@ -343,9 +343,14 @@ async def run_workflow(app: Client, source_chat_id: int, target_chat_id: int):
             print(f"[-] Scanning source channel from checkpoint ID: {last_id}")
             
             messages = []
+            scan_count = 0
             async for msg in app.get_chat_history(source_chat_id):
                 if msg.id <= last_id:
                     break
+                
+                scan_count += 1
+                if scan_count % 50 == 0:
+                    print(f"[-] Scanning... Checked {scan_count} messages from history.")
                 
                 # Check if already processed (secondary check)
                 if not is_already_processed(msg.id):
