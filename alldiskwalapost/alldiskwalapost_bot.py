@@ -7,6 +7,7 @@ import asyncio
 try:
     asyncio.get_event_loop()
 except RuntimeError:
+    
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
@@ -152,23 +153,42 @@ async def resolve_chat_id(app: Client, chat_value: str) -> int:
 def extract_metadata_via_groq(caption_text: str) -> str:
     if not GROQ_API_KEY:
         print("[ERROR] GROQ_API_KEY is missing from .env.")
-        return ""
+        raise ValueError("GROQ_API_KEY is missing")
     
-    try:
-        groq_client = Groq(api_key=GROQ_API_KEY)
-        chat_completion = groq_client.chat.completions.create(
-            messages=[
-                {"role": "system", "content": GROQ_SYSTEM_PROMPT},
-                {"role": "user", "content": caption_text}
-            ],
-            model=GROQ_MODEL,
-            temperature=0.1  # Low temperature for highly precise output
-        )
-        result = chat_completion.choices[0].message.content
-        return result.strip()
-    except Exception as e:
-        print(f"[x] Groq API call failed: {e}")
-        return ""
+    attempt = 0
+    max_attempts = 5
+    while attempt < max_attempts:
+        try:
+            groq_client = Groq(api_key=GROQ_API_KEY)
+            chat_completion = groq_client.chat.completions.create(
+                messages=[
+                    {"role": "system", "content": GROQ_SYSTEM_PROMPT},
+                    {"role": "user", "content": caption_text}
+                ],
+                model=GROQ_MODEL,
+                temperature=0.1  # Low temperature for highly precise output
+            )
+            result = chat_completion.choices[0].message.content
+            return result.strip()
+        except Exception as e:
+            err_str = str(e)
+            if "rate_limit" in err_str.lower() or "429" in err_str or "rate limit" in err_str.lower():
+                wait_time = 60  # default
+                # Extract wait time from error message: "Please try again in 1m30.72s."
+                match = re.search(r'try again in (?:(\d+)m)?([\d.]+)s', err_str)
+                if match:
+                    mins = int(match.group(1)) if match.group(1) else 0
+                    secs = float(match.group(2))
+                    wait_time = int(mins * 60 + secs) + 5  # Add 5s safety buffer
+                
+                print(f"[!] Groq Rate Limit (429) hit. Sleeping for {wait_time}s before retry {attempt + 1}/{max_attempts}...")
+                time.sleep(wait_time)
+                attempt += 1
+            else:
+                print(f"[x] Groq API call failed: {e}")
+                raise e
+    
+    raise RuntimeError("Max retries exceeded for Groq API call due to Rate Limits.")
 
 # ================= PROCESS & PUBLISH =================
 async def process_message(app: Client, msg, source_chat_id: int, target_chat_id: int):
@@ -198,8 +218,7 @@ async def process_message(app: Client, msg, source_chat_id: int, target_chat_id:
     metadata_output = extract_metadata_via_groq(raw_caption)
     
     if not metadata_output:
-        print(f"[!] Groq metadata extraction failed for message {msg.id}. Skipping.")
-        return
+        raise RuntimeError("Groq metadata extraction returned empty output.")
 
     print(f"[-] Groq API Response:\n---\n{metadata_output}\n---")
 
@@ -284,12 +303,13 @@ async def run_workflow(app: Client, source_chat_id: int, target_chat_id: int):
                 for msg in messages:
                     try:
                         await process_message(app, msg, source_chat_id, target_chat_id)
+                        save_last_processed_id(msg.id)
+                        print(f"[-] Sleeping for {COOLDOWN} seconds cooldown...")
+                        await asyncio.sleep(COOLDOWN)
                     except Exception as msg_err:
                         print(f"[!] Error processing message {msg.id}: {msg_err}")
-                    
-                    save_last_processed_id(msg.id)
-                    print(f"[-] Sleeping for {COOLDOWN} seconds cooldown...")
-                    await asyncio.sleep(COOLDOWN)
+                        print("[-] Pausing workflow due to processing failure. Will retry on next scan.")
+                        break
             else:
                 print("[-] No new posts found in scan.")
                 
