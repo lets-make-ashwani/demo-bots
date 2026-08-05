@@ -364,17 +364,32 @@ async def run_workflow(app: Client, source_chat_id: int, target_chat_id: int):
             
             messages = []
             scan_count = 0
-            async for msg in app.get_chat_history(source_chat_id):
-                if msg.id <= last_id:
-                    break
-                
-                scan_count += 1
-                if scan_count % 50 == 0:
-                    print(f"[-] Scanning... Checked {scan_count} messages from history.")
-                
-                # Check if already processed (secondary check)
-                if not is_already_processed(msg.id):
-                    messages.append(msg)
+            
+            if last_id > 0:
+                # Fast forward-pagination: fetch up to 100 messages starting from last_id moving forward
+                async for msg in app.get_chat_history(source_chat_id, limit=100, offset_id=last_id, offset=-100):
+                    if msg.id <= last_id:
+                        # Skip the offset boundary message itself
+                        continue
+                    
+                    scan_count += 1
+                    if scan_count % 50 == 0:
+                        print(f"[-] Scanning... Checked {scan_count} messages from history.")
+                    
+                    if not is_already_processed(msg.id):
+                        messages.append(msg)
+            else:
+                # Fallback for first run: scan normally from newest
+                async for msg in app.get_chat_history(source_chat_id):
+                    if msg.id <= last_id:
+                        break
+                    
+                    scan_count += 1
+                    if scan_count % 50 == 0:
+                        print(f"[-] Scanning... Checked {scan_count} messages from history.")
+                    
+                    if not is_already_processed(msg.id):
+                        messages.append(msg)
             
             if messages:
                 # Reverse to process chronologically (oldest to newest)
