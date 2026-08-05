@@ -158,7 +158,7 @@ def extract_metadata_via_gemini(caption_text: str) -> str:
     max_attempts = 5
     while attempt < max_attempts:
         try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key={GEMINI_API_KEY}"
             headers = {"Content-Type": "application/json"}
             payload = {
                 "systemInstruction": {
