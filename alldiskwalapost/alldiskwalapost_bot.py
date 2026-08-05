@@ -190,6 +190,49 @@ def extract_metadata_via_groq(caption_text: str) -> str:
     
     raise RuntimeError("Max retries exceeded for Groq API call due to Rate Limits.")
 
+# ================= PHOTO DOWNLOAD HELPER (REFETCH IF EXPIRED) =================
+async def download_photo_with_refetch(app: Client, source_chat_id: int, msg, temp_file: str) -> str | None:
+    # Cleanup any existing file first
+    if os.path.exists(temp_file):
+        try:
+            os.remove(temp_file)
+        except Exception:
+            pass
+
+    try:
+        # First attempt: download using the reference in msg
+        path = await app.download_media(msg.photo, file_name=temp_file)
+        if path and os.path.exists(path) and os.path.getsize(path) > 0:
+            return path
+    except Exception as e:
+        print(f"[!] First download attempt failed: {e}")
+
+    # If first attempt failed or returned a 0-byte file, retry after refetching the message
+    print("[-] File reference might be expired. Refetching message from origin context...")
+    if os.path.exists(temp_file):
+        try:
+            os.remove(temp_file)
+        except Exception:
+            pass
+
+    try:
+        fresh_msg = await app.get_messages(source_chat_id, msg.id)
+        if fresh_msg and fresh_msg.photo:
+            path = await app.download_media(fresh_msg.photo, file_name=temp_file)
+            if path and os.path.exists(path) and os.path.getsize(path) > 0:
+                print("[+] Successfully downloaded photo after refetching!")
+                return path
+    except Exception as e:
+        print(f"[!] Refetch download attempt failed: {e}")
+
+    if os.path.exists(temp_file):
+        try:
+            os.remove(temp_file)
+        except Exception:
+            pass
+            
+    return None
+
 # ================= PROCESS & PUBLISH =================
 async def process_message(app: Client, msg, source_chat_id: int, target_chat_id: int):
     print(f"\n[-] Processing message ID: {msg.id}")
@@ -229,16 +272,11 @@ async def process_message(app: Client, msg, source_chat_id: int, target_chat_id:
     # Handle media/thumbnail download
     thumb_path = None
     if msg.photo:
-        print("[-] Post has a photo. Downloading photo...")
-        try:
-            os.makedirs("temp_photos", exist_ok=True)
-            temp_file = f"temp_photos/photo_{msg.id}.jpg"
-            thumb_path = await app.download_media(msg.photo, file_name=temp_file)
-            if thumb_path:
-                print(f"[+] Downloaded photo to: {thumb_path} (Size: {os.path.getsize(thumb_path)} bytes)")
-        except Exception as e:
-            print(f"[!] Failed to download photo: {e}")
-            thumb_path = None
+        os.makedirs("temp_photos", exist_ok=True)
+        temp_file = f"temp_photos/photo_{msg.id}.jpg"
+        thumb_path = await download_photo_with_refetch(app, source_chat_id, msg, temp_file)
+        if thumb_path:
+            print(f"[+] Downloaded photo to: {thumb_path} (Size: {os.path.getsize(thumb_path)} bytes)")
     else:
         print("[-] Post does not contain a photo (text-only post).")
 
