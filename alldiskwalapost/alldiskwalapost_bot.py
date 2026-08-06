@@ -2,6 +2,8 @@ import os
 import re
 import time
 import asyncio
+from datetime import datetime, timezone
+import logging
 
 # Fix event loop initialization for Python 3.12+ where get_event_loop() raises RuntimeError
 try:
@@ -10,6 +12,9 @@ except RuntimeError:
     
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
+
+# Configure pyrogram logging to suppress verbose tracebacks/warnings
+logging.getLogger("pyrogram").setLevel(logging.WARNING)
 
 import sys
 import io
@@ -217,16 +222,27 @@ async def download_photo_with_refetch(app: Client, source_chat_id: int, msg, tem
         except Exception:
             pass
 
-    try:
-        # First attempt: download using the reference in msg
-        path = await app.download_media(msg.photo, file_name=temp_file)
-        if path and os.path.exists(path) and os.path.getsize(path) > 0:
-            return path
-    except Exception as e:
-        print(f"[!] First download attempt failed: {e}")
+    # Check if the message is older than 1 hour (3600 seconds) to avoid expired file references
+    is_old = False
+    if msg.date:
+        msg_date_utc = msg.date.replace(tzinfo=timezone.utc) if msg.date.tzinfo is None else msg.date
+        age_seconds = (datetime.now(timezone.utc) - msg_date_utc).total_seconds()
+        if age_seconds > 3600:
+            is_old = True
 
-    # If first attempt failed or returned a 0-byte file, retry after refetching the message
-    print("[-] File reference might be expired. Refetching message from origin context...")
+    if not is_old:
+        try:
+            # First attempt: download using the reference in msg
+            path = await app.download_media(msg.photo, file_name=temp_file)
+            if path and os.path.exists(path) and os.path.getsize(path) > 0:
+                return path
+        except Exception as e:
+            print(f"[!] First download attempt failed: {e}")
+    else:
+        print("[-] Message is older than 1 hour. Skipping direct download to prevent expired file reference exception...")
+
+    # If first attempt failed, was skipped, or returned a 0-byte file, retry after refetching the message
+    print("[-] Fetching fresh message from origin context to get a valid file reference...")
     if os.path.exists(temp_file):
         try:
             os.remove(temp_file)
