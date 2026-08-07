@@ -72,7 +72,8 @@ Follow these strict rules:
    - **Link**: [The full diskwala.com URL found in the post]
 
 5. CRITICAL: If a field is not present in the original text or is not applicable (like Season/Episodes for a movie), do NOT output that field's line at all. Do NOT output empty labels (e.g., do NOT print "* Season:" or "**Season**:" if it has no value). Only output lines that have actual extracted data.
-6. Make sure the output format is a clean bulleted list using "* **Field Name**: Value" (e.g. * **Title**: The Hobbit)."""
+6. Make sure the output format is a clean bulleted list using "* **Field Name**: Value" (e.g. * **Title**: The Hobbit).
+7. If the post contains references to a specific part (such as 'part 1', 'p1', 'pt 1', 'part 2', 'p2', etc.), ensure that you append this part information (cleanly formatted as 'Part 1', 'Part 2', etc.) to the **Title** so that the part is clearly identified and users can know if it's available."""
 
 # ================= DATABASE CONNECTION =================
 def init_db():
