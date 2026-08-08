@@ -176,27 +176,55 @@ def extract_metadata_via_gemini(caption_text: str) -> str:
         print(f"[-] Attempting metadata extraction using model: {model_name}")
         
         try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={GEMINI_API_KEY}"
-            headers = {"Content-Type": "application/json"}
-            payload = {
-                "systemInstruction": {
-                    "parts": [
-                        {"text": SYSTEM_PROMPT}
-                    ]
-                },
-                "contents": [
-                    {
-                        "parts": [
-                            {"text": caption_text}
-                        ]
-                    }
-                ],
-                "generationConfig": {
-                    "temperature": 0.1
-                }
-            }
+            # Determine API version order to try
+            api_versions = ["v1", "v1beta"]
+            if any(x in model_name.lower() for x in ["lite", "preview", "exp", "3.1", "beta"]):
+                api_versions = ["v1beta", "v1"]
+                
+            success = False
+            response = None
             
-            response = requests.post(url, json=payload, headers=headers)
+            for api_ver in api_versions:
+                url = f"https://generativelanguage.googleapis.com/{api_ver}/models/{model_name}:generateContent?key={GEMINI_API_KEY}"
+                headers = {"Content-Type": "application/json"}
+                payload = {
+                    "systemInstruction": {
+                        "parts": [
+                            {"text": SYSTEM_PROMPT}
+                        ]
+                    },
+                    "contents": [
+                        {
+                            "parts": [
+                                {"text": caption_text}
+                            ]
+                        }
+                    ],
+                    "generationConfig": {
+                        "temperature": 0.1
+                    }
+                }
+                
+                print(f"[-] Sending request using API version: {api_ver}...")
+                response = requests.post(url, json=payload, headers=headers)
+                
+                if response.status_code == 404:
+                    print(f"[!] Model {model_name} not found on {api_ver} API. Trying next version...")
+                    continue
+                else:
+                    success = True
+                    break
+                    
+            if not success or response is None:
+                print(f"[!] Model {model_name} returned 404 on all API endpoints.")
+                if current_model_idx + 1 < len(models_to_try):
+                    next_model = models_to_try[current_model_idx + 1]
+                    print(f"[!] Switching to fallback model: {next_model}...")
+                    current_model_idx += 1
+                    time.sleep(1)
+                    continue
+                else:
+                    raise RuntimeError(f"Model {model_name} not found on any API endpoint.")
             
             # Check for quota or rate limit errors in response
             is_quota_exhausted = (
