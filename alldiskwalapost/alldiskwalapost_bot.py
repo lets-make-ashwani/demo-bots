@@ -162,6 +162,7 @@ def extract_metadata_via_gemini(caption_text: str) -> str:
         print("[ERROR] GEMINI_API_KEY is missing from .env.")
         raise ValueError("GEMINI_API_KEY is missing")
     
+    has_quota_error = False
     primary_model = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite").strip()
     fallback_candidates = [
         "gemini-1.5-flash-latest", 
@@ -250,6 +251,8 @@ def extract_metadata_via_gemini(caption_text: str) -> str:
                 "RESOURCE_EXHAUSTED" in response.text or 
                 "quota" in response.text.lower()
             )
+            if is_quota_exhausted:
+                has_quota_error = True
             
             if is_model_unavailable or is_quota_exhausted:
                 if is_model_unavailable:
@@ -278,12 +281,18 @@ def extract_metadata_via_gemini(caption_text: str) -> str:
                 
         except Exception as e:
             err_str = str(e)
-            should_fallback_model = (
+            is_quota = (
                 "rate_limit" in err_str.lower() or 
                 "429" in err_str or 
                 "rate limit" in err_str.lower() or 
                 "quota" in err_str.lower() or 
-                "resource_exhausted" in err_str.lower() or
+                "resource_exhausted" in err_str.lower()
+            )
+            if is_quota:
+                has_quota_error = True
+                
+            should_fallback_model = (
+                is_quota or
                 "404" in err_str or
                 "400" in err_str or
                 "not_found" in err_str.lower() or
@@ -314,7 +323,10 @@ def extract_metadata_via_gemini(caption_text: str) -> str:
             # Reset model index on next attempt to try from beginning
             current_model_idx = 0
     
-    raise RuntimeError("Max retries exceeded for Gemini API call.")
+    if has_quota_error:
+        raise RuntimeError("Max retries exceeded for Gemini API call due to Daily Quota Exhaustion (429 RESOURCE_EXHAUSTED).")
+    else:
+        raise RuntimeError("Max retries exceeded for Gemini API call.")
 
 # ================= PHOTO DOWNLOAD HELPER (REFETCH IF EXPIRED) =================
 async def download_photo_with_refetch(app: Client, source_chat_id: int, msg, temp_file: str) -> str | None:
@@ -526,7 +538,13 @@ async def run_workflow(app: Client, source_chat_id: int, target_chat_id: int):
                         await asyncio.sleep(cooldown_sleep)
                     except Exception as msg_err:
                         print(f"[!] Error processing message {msg.id}: {msg_err}")
-                        print("[-] Pausing workflow due to processing failure. Will retry on next scan.")
+                        err_str = str(msg_err).lower()
+                        if "429" in err_str or "quota" in err_str or "resource_exhausted" in err_str:
+                            sleep_duration = 3600  # 1 hour
+                            print(f"[!] Daily API Quota exceeded. Sleeping workflow for {sleep_duration} seconds to rest API key...")
+                            await asyncio.sleep(sleep_duration)
+                        else:
+                            print("[-] Pausing workflow due to processing failure. Will retry on next scan.")
                         break
             else:
                 print("[-] No new posts found in scan.")
