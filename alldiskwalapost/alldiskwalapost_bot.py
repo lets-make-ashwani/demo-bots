@@ -160,11 +160,23 @@ def extract_metadata_via_gemini(caption_text: str) -> str:
         print("[ERROR] GEMINI_API_KEY is missing from .env.")
         raise ValueError("GEMINI_API_KEY is missing")
     
+    primary_model = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite").strip()
+    fallback_candidates = ["gemini-1.5-flash", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.0-flash-lite-preview-02-05", "gemini-1.5-pro"]
+    models_to_try = [primary_model] + [m for m in fallback_candidates if m != primary_model]
+    
+    current_model_idx = 0
     attempt = 0
     max_attempts = 5
+    
     while attempt < max_attempts:
+        if current_model_idx >= len(models_to_try):
+            current_model_idx = 0  # Wrap around
+            
+        model_name = models_to_try[current_model_idx]
+        print(f"[-] Attempting metadata extraction using model: {model_name}")
+        
         try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key={GEMINI_API_KEY}"
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={GEMINI_API_KEY}"
             headers = {"Content-Type": "application/json"}
             payload = {
                 "systemInstruction": {
@@ -185,6 +197,25 @@ def extract_metadata_via_gemini(caption_text: str) -> str:
             }
             
             response = requests.post(url, json=payload, headers=headers)
+            
+            # Check for quota or rate limit errors in response
+            is_quota_exhausted = (
+                response.status_code == 429 or 
+                "RESOURCE_EXHAUSTED" in response.text or 
+                "quota" in response.text.lower()
+            )
+            
+            if is_quota_exhausted:
+                print(f"[!] Quota/Rate limit hit for model {model_name} (Status {response.status_code}).")
+                if current_model_idx + 1 < len(models_to_try):
+                    next_model = models_to_try[current_model_idx + 1]
+                    print(f"[!] Switching to fallback model: {next_model}...")
+                    current_model_idx += 1
+                    time.sleep(2)
+                    continue  # Retry immediately with the next model
+                else:
+                    raise RuntimeError(f"HTTP Error {response.status_code}: {response.text}")
+                    
             if response.status_code != 200:
                 raise RuntimeError(f"HTTP Error {response.status_code}: {response.text}")
                 
@@ -197,20 +228,37 @@ def extract_metadata_via_gemini(caption_text: str) -> str:
                 
         except Exception as e:
             err_str = str(e)
-            wait_time = random.randint(60, 300)  # Default: wait 1 to 5 minutes
+            is_quota_err = (
+                "rate_limit" in err_str.lower() or 
+                "429" in err_str or 
+                "rate limit" in err_str.lower() or 
+                "quota" in err_str.lower() or 
+                "resource_exhausted" in err_str.lower()
+            )
             
-            # Check for Rate Limit 429 to extract exact wait time if possible
-            if "rate_limit" in err_str.lower() or "429" in err_str or "rate limit" in err_str.lower() or "quota" in err_str.lower():
+            # Try to switch models first if it's a quota error
+            if is_quota_err and (current_model_idx + 1 < len(models_to_try)):
+                next_model = models_to_try[current_model_idx + 1]
+                print(f"[!] Quota error exception with {model_name}. Switching to fallback: {next_model}...")
+                current_model_idx += 1
+                time.sleep(2)
+                continue
+                
+            # If no fallback is available or it's a different error, wait and retry
+            wait_time = random.randint(60, 300)
+            if is_quota_err:
                 match = re.search(r'try again in (?:(\d+)m)?([\d.]+)s', err_str)
                 if match:
                     mins = int(match.group(1)) if match.group(1) else 0
                     secs = float(match.group(2))
-                    wait_time = int(mins * 60 + secs) + 5  # Add 5s safety buffer
-                
-            print(f"[!] Gemini API error occurred: {e}")
+                    wait_time = int(mins * 60 + secs) + 5
+                    
+            print(f"[!] Gemini API error occurred on {model_name}: {e}")
             print(f"[!] Waiting for {wait_time}s (approx {wait_time/60:.1f} mins) before retrying {attempt + 1}/{max_attempts}...")
             time.sleep(wait_time)
             attempt += 1
+            # Reset model index on next attempt to try from beginning
+            current_model_idx = 0
     
     raise RuntimeError("Max retries exceeded for Gemini API call.")
 
