@@ -64,6 +64,8 @@ Follow these strict rules:
 3. Output ONLY the formatted metadata fields.
 4. Extract ONLY these fields:
    - **Title**: [Clean name of the movie or web series]
+   - **Type**: [The country of origin followed by the media type, e.g. Korean Drama, Japanese Anime, Indian Movie, Hollywood Movie, Chinese Movie, etc. derived from your knowledge of the title]
+   - **Genre**: [Comma-separated list of genres, e.g. Action, Comedy, Romance, Thriller]
    - **Season**: [Season number, e.g. S01]
    - **Episodes**: [Episode numbers, e.g. E01-08]
    - **Resolution**: [e.g. 1080p, 720p, 480p]
@@ -187,25 +189,42 @@ def extract_metadata_via_gemini(caption_text: str) -> str:
             # System instructions are ONLY supported on v1beta endpoint
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={GEMINI_API_KEY}"
             headers = {"Content-Type": "application/json"}
-            payload = {
-                "systemInstruction": {
-                    "parts": [
-                        {"text": SYSTEM_PROMPT}
-                    ]
-                },
-                "contents": [
-                    {
-                        "parts": [
-                            {"text": caption_text}
-                        ]
-                    }
-                ],
-                "generationConfig": {
-                    "temperature": 0.1
-                }
-            }
             
-            response = requests.post(url, json=payload, headers=headers)
+            response = None
+            # Try with Google Search tool first for web grounding. If not supported, fallback to standard call.
+            for use_search in [True, False]:
+                payload = {
+                    "systemInstruction": {
+                        "parts": [
+                            {"text": SYSTEM_PROMPT}
+                        ]
+                    },
+                    "contents": [
+                        {
+                            "parts": [
+                                {"text": caption_text}
+                            ]
+                        }
+                    ],
+                    "generationConfig": {
+                        "temperature": 0.1
+                    }
+                }
+                
+                if use_search:
+                    payload["tools"] = [{"google_search": {}}]
+                    print(f"[-] Requesting model {model_name} with Google Search grounding...")
+                else:
+                    print(f"[-] Requesting model {model_name} without search grounding...")
+                    
+                response = requests.post(url, json=payload, headers=headers)
+                
+                # If Google Search tool is not enabled/supported (Status 400/403), retry without it
+                if use_search and (response.status_code == 400 or response.status_code == 403):
+                    print(f"[!] Google Search tool not available or rejected (Status {response.status_code}). Retrying without search...")
+                    continue
+                else:
+                    break
             
             # Check for model not found (404) or bad request / invalid argument / invalid model (400)
             is_model_unavailable = (
