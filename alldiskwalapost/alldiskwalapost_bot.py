@@ -64,6 +64,7 @@ Follow these strict rules:
 3. Output ONLY the formatted metadata fields.
 4. Extract ONLY these fields:
    - **Title**: [Clean name of the movie or web series]
+   - **Year**: [Release year, e.g. 2024, derived from the caption or your knowledge/search of the title]
    - **Type**: [The country of origin followed by the media type, e.g. Korean Drama, Japanese Anime, Indian Movie, Hollywood Movie, Chinese Movie, etc. derived from your knowledge of the title]
    - **Genre**: [Comma-separated list of genres, e.g. Action, Comedy, Romance, Thriller]
    - **Season**: [Season number, e.g. S01]
