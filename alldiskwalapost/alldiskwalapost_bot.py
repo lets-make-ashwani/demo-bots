@@ -161,7 +161,15 @@ def extract_metadata_via_gemini(caption_text: str) -> str:
         raise ValueError("GEMINI_API_KEY is missing")
     
     primary_model = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite").strip()
-    fallback_candidates = ["gemini-1.5-flash", "gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.0-flash-lite-preview-02-05", "gemini-1.5-pro"]
+    fallback_candidates = [
+        "gemini-1.5-flash-latest", 
+        "gemini-1.5-flash", 
+        "gemini-2.5-flash", 
+        "gemini-2.0-flash", 
+        "gemini-2.0-flash-lite-preview-02-05", 
+        "gemini-1.5-pro-latest", 
+        "gemini-1.5-pro"
+    ]
     models_to_try = [primary_model] + [m for m in fallback_candidates if m != primary_model]
     
     current_model_idx = 0
@@ -176,55 +184,36 @@ def extract_metadata_via_gemini(caption_text: str) -> str:
         print(f"[-] Attempting metadata extraction using model: {model_name}")
         
         try:
-            # Determine API version order to try
-            api_versions = ["v1", "v1beta"]
-            if any(x in model_name.lower() for x in ["lite", "preview", "exp", "3.1", "beta"]):
-                api_versions = ["v1beta", "v1"]
-                
-            success = False
-            response = None
-            
-            for api_ver in api_versions:
-                url = f"https://generativelanguage.googleapis.com/{api_ver}/models/{model_name}:generateContent?key={GEMINI_API_KEY}"
-                headers = {"Content-Type": "application/json"}
-                payload = {
-                    "systemInstruction": {
+            # System instructions are ONLY supported on v1beta endpoint
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={GEMINI_API_KEY}"
+            headers = {"Content-Type": "application/json"}
+            payload = {
+                "systemInstruction": {
+                    "parts": [
+                        {"text": SYSTEM_PROMPT}
+                    ]
+                },
+                "contents": [
+                    {
                         "parts": [
-                            {"text": SYSTEM_PROMPT}
+                            {"text": caption_text}
                         ]
-                    },
-                    "contents": [
-                        {
-                            "parts": [
-                                {"text": caption_text}
-                            ]
-                        }
-                    ],
-                    "generationConfig": {
-                        "temperature": 0.1
                     }
+                ],
+                "generationConfig": {
+                    "temperature": 0.1
                 }
-                
-                print(f"[-] Sending request using API version: {api_ver}...")
-                response = requests.post(url, json=payload, headers=headers)
-                
-                if response.status_code == 404:
-                    print(f"[!] Model {model_name} not found on {api_ver} API. Trying next version...")
-                    continue
-                else:
-                    success = True
-                    break
-                    
-            if not success or response is None:
-                print(f"[!] Model {model_name} returned 404 on all API endpoints.")
-                if current_model_idx + 1 < len(models_to_try):
-                    next_model = models_to_try[current_model_idx + 1]
-                    print(f"[!] Switching to fallback model: {next_model}...")
-                    current_model_idx += 1
-                    time.sleep(1)
-                    continue
-                else:
-                    raise RuntimeError(f"Model {model_name} not found on any API endpoint.")
+            }
+            
+            response = requests.post(url, json=payload, headers=headers)
+            
+            # Check for model not found (404) or bad request / invalid argument / invalid model (400)
+            is_model_unavailable = (
+                response.status_code == 404 or 
+                response.status_code == 400 or
+                "NOT_FOUND" in response.text or
+                "INVALID_ARGUMENT" in response.text
+            )
             
             # Check for quota or rate limit errors in response
             is_quota_exhausted = (
@@ -233,8 +222,12 @@ def extract_metadata_via_gemini(caption_text: str) -> str:
                 "quota" in response.text.lower()
             )
             
-            if is_quota_exhausted:
-                print(f"[!] Quota/Rate limit hit for model {model_name} (Status {response.status_code}).")
+            if is_model_unavailable or is_quota_exhausted:
+                if is_model_unavailable:
+                    print(f"[!] Model {model_name} is unavailable or returned error (Status {response.status_code}).")
+                else:
+                    print(f"[!] Quota/Rate limit hit for model {model_name} (Status {response.status_code}).")
+                
                 if current_model_idx + 1 < len(models_to_try):
                     next_model = models_to_try[current_model_idx + 1]
                     print(f"[!] Switching to fallback model: {next_model}...")
@@ -256,25 +249,29 @@ def extract_metadata_via_gemini(caption_text: str) -> str:
                 
         except Exception as e:
             err_str = str(e)
-            is_quota_err = (
+            should_fallback_model = (
                 "rate_limit" in err_str.lower() or 
                 "429" in err_str or 
                 "rate limit" in err_str.lower() or 
                 "quota" in err_str.lower() or 
-                "resource_exhausted" in err_str.lower()
+                "resource_exhausted" in err_str.lower() or
+                "404" in err_str or
+                "400" in err_str or
+                "not_found" in err_str.lower() or
+                "invalid_argument" in err_str.lower()
             )
             
-            # Try to switch models first if it's a quota error
-            if is_quota_err and (current_model_idx + 1 < len(models_to_try)):
+            # Try to switch models first if it's a quota or model-unavailability error
+            if should_fallback_model and (current_model_idx + 1 < len(models_to_try)):
                 next_model = models_to_try[current_model_idx + 1]
-                print(f"[!] Quota error exception with {model_name}. Switching to fallback: {next_model}...")
+                print(f"[!] Model error exception with {model_name}. Switching to fallback: {next_model}...")
                 current_model_idx += 1
                 time.sleep(2)
                 continue
                 
             # If no fallback is available or it's a different error, wait and retry
             wait_time = random.randint(60, 300)
-            if is_quota_err:
+            if should_fallback_model:
                 match = re.search(r'try again in (?:(\d+)m)?([\d.]+)s', err_str)
                 if match:
                     mins = int(match.group(1)) if match.group(1) else 0
