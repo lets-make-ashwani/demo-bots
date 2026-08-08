@@ -166,10 +166,20 @@ def extract_metadata_via_gemini(caption_text: str) -> str:
     fallback_candidates = [
         "gemini-1.5-flash-latest", 
         "gemini-1.5-flash", 
+        "gemini-1.5-flash-002",
+        "gemini-1.5-flash-001",
+        "gemini-1.5-flash-8b-latest",
+        "gemini-1.5-flash-8b",
         "gemini-2.5-flash", 
         "gemini-2.0-flash", 
+        "gemini-2.0-flash-lite-latest",
+        "gemini-2.0-flash-lite",
         "gemini-2.0-flash-lite-preview-02-05", 
+        "gemini-2.0-pro-exp-02-05",
+        "gemini-2.0-flash-thinking-exp-01-21",
+        "gemini-2.0-flash-thinking-exp",
         "gemini-1.5-pro-latest", 
+        "gemini-1.5-pro-002",
         "gemini-1.5-pro"
     ]
     models_to_try = [primary_model] + [m for m in fallback_candidates if m != primary_model]
