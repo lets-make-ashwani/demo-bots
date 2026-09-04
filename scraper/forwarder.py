@@ -135,14 +135,6 @@ async def resolve_chat_id(app: Client, chat_value: str) -> int:
     """
     chat_value = chat_value.strip()
 
-    # If it is numeric
-    if (chat_value.startswith("-") and chat_value[1:].isdigit()) or chat_value.isdigit():
-        try:
-            resolved = await app.get_chat(int(chat_value))
-            return resolved.id
-        except Exception:
-            pass
-
     # If it is a private invite link
     if "t.me/+" in chat_value or chat_value.startswith("+"):
         try:
@@ -158,8 +150,35 @@ async def resolve_chat_id(app: Client, chat_value: str) -> int:
     if chat_value.startswith("https://t.me/"):
         chat_value = chat_value.replace("https://t.me/", "").split("/")[0]
 
+    # If numeric ID (e.g. -1004350704894)
+    if (chat_value.startswith("-") and chat_value[1:].isdigit()) or chat_value.isdigit():
+        target_int = int(chat_value)
+        try:
+            chat = await app.get_chat(target_int)
+            return chat.id
+        except Exception:
+            # Pyrogram hasn't cached this channel's peer access hash yet on this session.
+            # Load dialogs to populate Pyrogram's peer cache.
+            print(f"[-] Populating peer cache from dialogs for ID {target_int}...")
+            try:
+                async for dialog in app.get_dialogs():
+                    if dialog.chat and dialog.chat.id == target_int:
+                        return dialog.chat.id
+            except Exception as de:
+                print(f"[!] Error iterating dialogs: {de}")
+
+            # Try get_chat again after dialogs loop
+            try:
+                chat = await app.get_chat(target_int)
+                return chat.id
+            except Exception as e:
+                raise ValueError(
+                    f"[x] Could not resolve chat ID '{chat_value}'. Reason: {e}\n"
+                    f"Please verify your account is a member of this channel/group."
+                )
+
     # Prefix public usernames
-    if not chat_value.startswith("@") and not chat_value.startswith("-") and not chat_value.isdigit():
+    if not chat_value.startswith("@"):
         chat_value = "@" + chat_value
 
     try:
