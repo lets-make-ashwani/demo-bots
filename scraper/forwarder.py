@@ -33,7 +33,7 @@ API_HASH = os.getenv("API_HASH", "")
 SESSION_NAME = os.getenv("SESSION_NAME", "forwarder_session")
 
 # Chat Configurations
-SOURCE_CHAT = (os.getenv("SOURCE_CHAT_SCRAPER") or os.getenv("SOURCE_CHAT", "-1003913970582")).strip()
+SOURCE_CHAT = (os.getenv("SOURCE_CHAT_SCRAPER") or os.getenv("SOURCE_CHAT", "-1003733985584")).strip()
 TARGET_CHAT = (os.getenv("TARGET_CHAT_SCRAPER") or os.getenv("TARGET_CHAT", "-1003224058374")).strip()
 CHAT_FOLDER_LINK = os.getenv("CHAT_FOLDER_LINK", "").strip()
 DB_FILE = os.getenv("DB_FILE", "forwarder_progress.db")
