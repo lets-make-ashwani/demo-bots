@@ -47,6 +47,8 @@ Copy and paste these exact values:
 | Key | Value to Paste | Description |
 |-----|----------------|-------------|
 | **`TARGET_CHAT_ORGANIZER`** | `https://t.me/organisepost` | Organizer channel link |
+| **`OMDB_API_KEY`** | `75e2afc` | OMDb API Key for IMDb movie data & posters |
+| **`GROQ_API_KEY`** | (Paste your Groq API Key) | Groq Llama/GPT key for caption parsing |
 | **`GEMINI_API_KEY`** | (Paste your Gemini API Key) | Gemini key |
 
 

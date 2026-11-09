@@ -42,6 +42,8 @@ venv/
 **/*.xlsx
 **/*.xls
 **/*.csv
+organisepost_all_texts.txt
+**/unknown_errors.txt
 
 # IDE / Editor configurations
 .vscode/

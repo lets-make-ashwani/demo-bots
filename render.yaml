@@ -63,6 +63,8 @@ services:
         sync: false
       - key: GEMINI_API_KEY
         sync: false
+      - key: OMDB_API_KEY
+        sync: false
 
       # All DiskWala Post Bot configurations
       - key: SOURCE_CHAT_ALLDISKWALAPOST

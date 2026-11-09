@@ -30,6 +30,7 @@ pyrogram.utils.MIN_CHAT_ID = -99999999999999
 pyrogram.utils.MAX_USER_ID = 99999999999999
 
 import logging
+import requests
 from pyrogram import Client, idle
 from pyrogram.errors import FloodWait, FileReferenceExpired
 
@@ -57,6 +58,10 @@ load_dotenv(override=True)
 API_ID = int(os.getenv("API_ID", "0"))
 API_HASH = os.getenv("API_HASH", "")
 SESSION_NAME = os.getenv("SESSION_NAME", "organizer_session")
+
+# AI & Movie Metadata APIs
+GROQ_API_KEY = (os.getenv("GROQ_API_KEY") or "").strip()
+OMDB_API_KEY = (os.getenv("OMDB_API_KEY") or "75e2afc").strip()
 
 # Channel & Bot configurations
 TARGET_CHAT = (os.getenv("TARGET_CHAT_ORGANIZER") or os.getenv("TARGET_CHAT", "")).strip()
@@ -100,9 +105,12 @@ def is_already_processed(reply_msg_id):
         print(f"[ERROR] Database read error: {e}")
         return False
 
-def mark_as_processed(reply_msg_id):
+def mark_as_processed(reply_msg_id, metadata=None):
     try:
-        db_conn["organizer_replies"].update_one({"_id": reply_msg_id}, {"$set": {"reply_msg_id": reply_msg_id}}, upsert=True)
+        update_data = {"reply_msg_id": reply_msg_id}
+        if metadata and isinstance(metadata, dict):
+            update_data.update(metadata)
+        db_conn["organizer_replies"].update_one({"_id": reply_msg_id}, {"$set": update_data}, upsert=True)
     except Exception as e:
         print(f"[ERROR] Database write error: {e}")
 
@@ -220,6 +228,108 @@ async def download_media_with_retry(app: Client, media, file_path: str, max_retr
     return None
 
 
+# ================= MOVIE METADATA ENRICHER (GROQ + OMDB) =================
+def enrich_movie_metadata(raw_caption: str) -> dict:
+    """
+    Enriches raw caption/filename using:
+      1. Groq AI to parse messy torrent/telegram strings into clean title/year/quality/audio
+      2. OMDb API (IMDb) to verify title on the internet and fetch official artwork & ratings
+    """
+    clean_meta = {
+        "found": False,
+        "title": raw_caption,
+        "year": "",
+        "imdb_id": None,
+        "rating": None,
+        "genres": None,
+        "director": None,
+        "actors": None,
+        "plot": None,
+        "poster_url": None,
+        "quality": "HD",
+        "languages": ""
+    }
+
+    if not raw_caption or raw_caption == "Watch Video":
+        return clean_meta
+
+    parsed = {}
+    if GROQ_API_KEY:
+        prompt = (
+            "Extract movie/series metadata from this telegram caption/filename. "
+            "Output strictly valid JSON with keys: "
+            "original_title (main/original title, e.g. name in parentheses like Ism or main title), "
+            "dubbed_title (Hindi dubbed title if applicable, otherwise null), "
+            "year (integer or null), "
+            "quality (e.g. 1080p, 720p, 480p), "
+            "languages (list of strings, e.g. ['Hindi', 'English'])."
+        )
+        models = ["openai/gpt-oss-120b", "qwen/qwen3.8-27b", "llama-3.3-70b-versatile"]
+        for model in models:
+            try:
+                r = requests.post(
+                    "https://api.groq.com/openai/v1/chat/completions",
+                    headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
+                    json={
+                        "model": model,
+                        "messages": [
+                            {"role": "system", "content": prompt},
+                            {"role": "user", "content": raw_caption}
+                        ],
+                        "response_format": {"type": "json_object"}
+                    },
+                    timeout=8
+                )
+                if r.status_code == 200:
+                    parsed = json.loads(r.json()["choices"][0]["message"]["content"])
+                    break
+            except Exception:
+                continue
+
+    cand_original = parsed.get("original_title") or ""
+    cand_dubbed = parsed.get("dubbed_title") or ""
+    cand_year = parsed.get("year") or ""
+    quality = parsed.get("quality") or "HD"
+    langs = ", ".join(parsed.get("languages", [])) if parsed.get("languages") else ""
+
+    clean_meta["quality"] = quality
+    clean_meta["languages"] = langs
+    clean_meta["title"] = cand_original or cand_dubbed or raw_caption
+    clean_meta["year"] = str(cand_year) if cand_year else ""
+
+    # Search OMDb for internet verification & official artwork
+    if OMDB_API_KEY:
+        candidates = [c for c in [cand_original, cand_dubbed, raw_caption] if c and len(c.strip()) > 1]
+        for cand in candidates:
+            try:
+                clean_cand = re.sub(r'\.(mkv|mp4|avi|webm)$', '', cand, flags=re.I).replace('.', ' ').replace('_', ' ').strip()
+                params = {"t": clean_cand, "apikey": OMDB_API_KEY}
+                if cand_year:
+                    params["y"] = str(cand_year)
+                omdb_res = requests.get("http://www.omdbapi.com/", params=params, headers={"User-Agent": "Mozilla/5.0"}, timeout=6).json()
+                if omdb_res.get("Response") == "True":
+                    clean_meta["found"] = True
+                    clean_meta["title"] = omdb_res.get("Title", clean_cand)
+                    clean_meta["year"] = omdb_res.get("Year", str(cand_year))
+                    clean_meta["imdb_id"] = omdb_res.get("imdbID")
+                    clean_meta["rating"] = omdb_res.get("imdbRating")
+                    clean_meta["genres"] = omdb_res.get("Genre")
+                    clean_meta["director"] = omdb_res.get("Director")
+                    clean_meta["actors"] = omdb_res.get("Actors")
+                    clean_meta["plot"] = omdb_res.get("Plot")
+                    poster = omdb_res.get("Poster")
+                    if poster and poster != "N/A" and poster.startswith("http"):
+                        clean_meta["poster_url"] = poster
+                    if not clean_meta["languages"] and omdb_res.get("Language") and omdb_res.get("Language") != "N/A":
+                        clean_meta["languages"] = omdb_res.get("Language")
+                    print(f"[+] OMDb verified: '{clean_meta['title']} ({clean_meta['year']})' [Rating: {clean_meta['rating']}]")
+                    break
+            except Exception as e:
+                print(f"[!] OMDb lookup failed for '{cand}': {e}")
+
+    return clean_meta
+
+
 async def process_and_publish_post(app: Client, target_chat_id: int, original_msg, diskwala_link: str, reply_msg):
     reply_msg_id = reply_msg.id
 
@@ -267,19 +377,65 @@ async def process_and_publish_post(app: Client, target_chat_id: int, original_ms
         if not raw_caption:
             raw_caption = "Watch Video"
 
-    # Combine original caption text and watch link
-    caption_text = (
-        f"{raw_caption}\n\n"
-        f"🎬 Watch Here 👇\n"
-        f"{diskwala_link}"
-    )
+    # Enrich metadata using Groq AI and OMDb API
+    print(f"[-] Enriching metadata for post: '{raw_caption[:60]}...'")
+    meta = enrich_movie_metadata(raw_caption)
+
+    # Format caption using verified metadata
+    if meta.get("found"):
+        header = f"🔥 {meta['title']} ({meta['year']})" if meta.get("year") else f"🔥 {meta['title']}"
+        rating_part = f"⭐ IMDb Rating: {meta['rating']}/10\n" if meta.get("rating") and meta["rating"] != "N/A" else ""
+        genre_part = f"🎭 Genre: {meta['genres']}\n" if meta.get("genres") and meta["genres"] != "N/A" else ""
+        audio_part = f"🗣️ Audio: {meta['languages']}\n" if meta.get("languages") else ""
+        quality_part = f"📺 Quality: {meta['quality']}\n" if meta.get("quality") else ""
+        cast_part = f"👥 Cast: {meta['actors']}\n" if meta.get("actors") and meta["actors"] != "N/A" else ""
+
+        caption_text = (
+            f"{header}\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"{rating_part}"
+            f"{genre_part}"
+            f"{audio_part}"
+            f"{quality_part}"
+            f"{cast_part}"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🎬 Watch Here 👇\n"
+            f"{diskwala_link}"
+        )
+    else:
+        display_title = meta.get("title") or raw_caption
+        quality_part = f"📺 Quality: {meta.get('quality')}\n" if meta.get("quality") else ""
+        audio_part = f"🗣️ Audio: {meta.get('languages')}\n" if meta.get("languages") else ""
+        caption_text = (
+            f"🔥 {display_title}\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"{quality_part}"
+            f"{audio_part}"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🎬 Watch Here 👇\n"
+            f"{diskwala_link}"
+        )
 
     thumb_path = None
     os.makedirs("temp_thumbs", exist_ok=True)
     raw_path = f"temp_thumbs/raw_{reply_msg_id}.jpg"
 
+    # Attempt to download official high-res poster from OMDb / Amazon first
+    if meta.get("poster_url"):
+        try:
+            print("[-] Downloading official movie poster from OMDb/Amazon...")
+            poster_path = f"temp_thumbs/poster_{reply_msg_id}.jpg"
+            resp = requests.get(meta["poster_url"], headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+            if resp.status_code == 200 and len(resp.content) > 1000:
+                with open(poster_path, "wb") as pf:
+                    pf.write(resp.content)
+                thumb_path = poster_path
+                print("[+] Downloaded official poster successfully!")
+        except Exception as pe:
+            print(f"[!] Official poster download failed: {pe}. Falling back to video thumb...")
+
     # 1. Primary Source: Attempt to download from the original message's video or document thumbnail
-    if is_original_msg_valid:
+    if not thumb_path and is_original_msg_valid:
         media_obj = original_msg.video or original_msg.document
         if media_obj and media_obj.thumbs:
             print("[-] Downloading video thumbnail from original file...")
@@ -353,7 +509,17 @@ async def process_and_publish_post(app: Client, target_chat_id: int, original_ms
             )
         msg_id_log = original_msg.id if is_original_msg_valid else f"reply_{reply_msg_id}"
         print(f"[+] Post published successfully for message {msg_id_log}!")
-        mark_as_processed(reply_msg_id)
+        mark_as_processed(reply_msg_id, metadata={
+            "title": meta.get("title"),
+            "year": meta.get("year"),
+            "imdb_id": meta.get("imdb_id"),
+            "imdb_rating": meta.get("rating"),
+            "genres": meta.get("genres"),
+            "quality": meta.get("quality"),
+            "languages": meta.get("languages"),
+            "diskwala_link": diskwala_link,
+            "processed_at": time.time()
+        })
     except Exception as e:
         print(f"[x] Failed to publish post: {e}")
 
