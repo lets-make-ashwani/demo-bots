@@ -330,6 +330,126 @@ def enrich_movie_metadata(raw_caption: str) -> dict:
     return clean_meta
 
 
+# ================= CAPTION CLEANER & TELEGRAM LINK STRIPPER =================
+def clean_raw_caption(raw_text: str) -> str:
+    """
+    Cleans raw caption/text to:
+      1. Strictly remove all promotional Telegram channel/group invite links (t.me/..., etc.)
+      2. Strictly remove all Telegram channel handles (@channel_name) and promo headers
+      3. Strictly remove old/duplicate watch links (diskwala links, 'Watch Here' lines)
+      4. Completely preserve original episode numbers, seasons, audio tracks, qualities, and titles.
+    """
+    if not raw_text:
+        return ""
+
+    # Normalize non-breaking spaces
+    text = raw_text.replace("\xa0", " ")
+    lines = text.splitlines()
+    cleaned_lines = []
+
+    # Patterns for lines that are promotional noise
+    promo_line_patterns = [
+        r"join\s+our\b",
+        r"join\s+(?:the\s+)?channel\b",
+        r"join\s+(?:the\s+)?telegram\b",
+        r"join\s+group\b",
+        r"join\s+us\b",
+        r"backup\s+channel\b",
+        r"main\s+channel\b",
+        r"second\s+channel\b",
+        r"official\s+channel\b",
+        r"subscribe\b",
+        r"follow\s+us\b",
+        r"for\s+more\s+(?:animes?|movies?|series|shows|updates|posts)\b",
+        r"channel\s+link\b",
+        r"(?:🎬\s*)?watch\s+here\b",
+        r"(?:🎬\s*)?watch\s+online\b",
+        r"download\s+link\b",
+        r"all\s+episodes\s+link\b",
+        r"forwarded\s+from\b",
+    ]
+
+    # Labels left behind if a link was stripped
+    empty_promo_labels = [
+        r"^(?:👉\s*|📡\s*|🔰\s*|🔗\s*|📢\s*)?(?:backup|channel|main\s+channel|second\s+channel|telegram|link|join|official\s+link|updates)?\s*[:\-–—]?\s*$"
+    ]
+
+    box_chars = r"[╭╰╮╯│├┤┌┐└┘]"
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            cleaned_lines.append("")
+            continue
+
+        # Strip box-drawing border characters from edges
+        stripped_box = re.sub(f"^{box_chars}+|{box_chars}+$", "", stripped).strip()
+        if not stripped_box:
+            continue
+
+        # Skip line if it matches known promotional phrases
+        if any(re.search(pat, stripped_box, re.IGNORECASE) for pat in promo_line_patterns):
+            continue
+
+        # Drop standalone promo handle lines (e.g. '📡 @indianotaku355' or '@some_channel')
+        # while keeping lines mentioning season/episode/audio/quality
+        if re.search(r"^(?:[^\w\s]*\s*)?@[a-zA-Z0-9_]{3,}\s*$", stripped_box) and not any(k in stripped_box.lower() for k in ["season", "episode", "audio", "quality", "track"]):
+            continue
+
+        # Strip all telegram URLs (https://t.me/..., t.me/..., telegram.me/..., tg://...)
+        line_clean = re.sub(r"https?://(?:www\.)?(?:t\.me|telegram\.me|telegram\.dog)/[^\s]+", "", stripped_box, flags=re.I)
+        line_clean = re.sub(r"(?:(?<=\s)|^)(?:t\.me|telegram\.me)/[^\s]+", "", line_clean, flags=re.I)
+        line_clean = re.sub(r"tg://[^\s]+", "", line_clean, flags=re.I)
+
+        # Strip existing diskwala links (canonical link will be appended cleanly at bottom)
+        line_clean = re.sub(r"https?://(?:www\.)?diskwala\.com/app/[a-zA-Z0-9]+", "", line_clean, flags=re.I)
+        line_clean = re.sub(r"https?://(?:www\.)?diskwala\.[a-z]+/[^\s]+", "", line_clean, flags=re.I)
+
+        # Strip standalone @channel_name mentions
+        line_clean = re.sub(r"(?:(?<=\s)|^)(?:@)[a-zA-Z0-9_]{3,}", "", line_clean)
+
+        stripped_after = line_clean.strip()
+
+        # Check if line was just a promo label pointing to a deleted link
+        if any(re.match(p, stripped_after, re.IGNORECASE) for p in empty_promo_labels):
+            continue
+
+        # Check if line is only separator/box border (e.g. ──────, ━━━━━━, -----, etc.)
+        is_divider = bool(re.match(r"^[─━_\-\*\=\.╭╰╮╯│├┤┌┐└┘]{3,}$", stripped_after))
+        if is_divider:
+            cleaned_lines.append("DIVIDER_PLACEHOLDER")
+            continue
+
+        if stripped_after:
+            cleaned_lines.append(stripped_after)
+
+    final_lines = []
+    last_was_divider = False
+    last_was_blank = False
+
+    for l in cleaned_lines:
+        if l == "DIVIDER_PLACEHOLDER":
+            if not last_was_divider and final_lines and not last_was_blank:
+                final_lines.append("━━━━━━━━━━━━━━━━━━━━━━")
+                last_was_divider = True
+        elif not l:
+            if not last_was_blank and final_lines:
+                final_lines.append("")
+                last_was_blank = True
+        else:
+            final_lines.append(l)
+            last_was_divider = False
+            last_was_blank = False
+
+    # Strip leading/trailing blank lines or dividers
+    while final_lines and (not final_lines[0] or final_lines[0] == "━━━━━━━━━━━━━━━━━━━━━━"):
+        final_lines.pop(0)
+    while final_lines and (not final_lines[-1] or final_lines[-1] == "━━━━━━━━━━━━━━━━━━━━━━"):
+        final_lines.pop()
+
+    return "\n".join(final_lines)
+
+
 async def process_and_publish_post(app: Client, target_chat_id: int, original_msg, diskwala_link: str, reply_msg):
     reply_msg_id = reply_msg.id
 
@@ -377,12 +497,24 @@ async def process_and_publish_post(app: Client, target_chat_id: int, original_ms
         if not raw_caption:
             raw_caption = "Watch Video"
 
-    # Enrich metadata using Groq AI and OMDb API
+    # Enrich metadata using Groq AI and OMDb API (for tracking and fallback)
     print(f"[-] Enriching metadata for post: '{raw_caption[:60]}...'")
     meta = enrich_movie_metadata(raw_caption)
 
-    # Format caption using verified metadata
-    if meta.get("found"):
+    # Clean raw_caption: strictly strip any telegram channel links, invites, handles, and promo text
+    cleaned_caption = clean_raw_caption(raw_caption)
+
+    # Format caption: preserve original post content (Season, Episode, Audio, Quality, Part, etc.)
+    if cleaned_caption and cleaned_caption != "Watch Video":
+        print("[+] Preserving original post content (episodes/seasons intact, promo links removed)")
+        caption_text = (
+            f"{cleaned_caption}\n\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🎬 Watch Here 👇\n"
+            f"{diskwala_link}"
+        )
+    elif meta.get("found"):
+        # Fallback if original caption was completely empty
         header = f"🔥 {meta['title']} ({meta['year']})" if meta.get("year") else f"🔥 {meta['title']}"
         rating_part = f"⭐ IMDb Rating: {meta['rating']}/10\n" if meta.get("rating") and meta["rating"] != "N/A" else ""
         genre_part = f"🎭 Genre: {meta['genres']}\n" if meta.get("genres") and meta["genres"] != "N/A" else ""
@@ -416,26 +548,19 @@ async def process_and_publish_post(app: Client, target_chat_id: int, original_ms
             f"{diskwala_link}"
         )
 
+    # Ensure caption does not exceed Telegram's 1024-char limit for media captions
+    if len(caption_text) > 1020:
+        watch_suffix = f"\n\n━━━━━━━━━━━━━━━━━━━━━━\n🎬 Watch Here 👇\n{diskwala_link}"
+        allowed_len = max(0, 1020 - len(watch_suffix) - 3)
+        caption_text = caption_text[:allowed_len].rstrip() + "..." + watch_suffix
+
     thumb_path = None
     os.makedirs("temp_thumbs", exist_ok=True)
     raw_path = f"temp_thumbs/raw_{reply_msg_id}.jpg"
 
-    # Attempt to download official high-res poster from OMDb / Amazon first
-    if meta.get("poster_url"):
-        try:
-            print("[-] Downloading official movie poster from OMDb/Amazon...")
-            poster_path = f"temp_thumbs/poster_{reply_msg_id}.jpg"
-            resp = requests.get(meta["poster_url"], headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
-            if resp.status_code == 200 and len(resp.content) > 1000:
-                with open(poster_path, "wb") as pf:
-                    pf.write(resp.content)
-                thumb_path = poster_path
-                print("[+] Downloaded official poster successfully!")
-        except Exception as pe:
-            print(f"[!] Official poster download failed: {pe}. Falling back to video thumb...")
-
     # 1. Primary Source: Attempt to download from the original message's video or document thumbnail
-    if not thumb_path and is_original_msg_valid:
+    # (Matches the exact episode / season thumbnail instead of generic search)
+    if is_original_msg_valid:
         media_obj = original_msg.video or original_msg.document
         if media_obj and media_obj.thumbs:
             print("[-] Downloading video thumbnail from original file...")
@@ -465,7 +590,21 @@ async def process_and_publish_post(app: Client, target_chat_id: int, original_ms
                 except Exception as fe:
                     print(f"[!] Refetch download failed: {fe}")
 
-    # 2. Fallbacks: Attempt to download from DiskWala reply message details if primary thumbnail was not found
+    # 2. Secondary Fallback: If no video thumbnail exists, try high-res poster from OMDb
+    if not thumb_path and meta.get("poster_url"):
+        try:
+            print("[-] No video thumbnail found. Downloading poster from OMDb fallback...")
+            poster_path = f"temp_thumbs/poster_{reply_msg_id}.jpg"
+            resp = requests.get(meta["poster_url"], headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+            if resp.status_code == 200 and len(resp.content) > 1000:
+                with open(poster_path, "wb") as pf:
+                    pf.write(resp.content)
+                thumb_path = poster_path
+                print("[+] Downloaded official poster successfully!")
+        except Exception as pe:
+            print(f"[!] Official poster download failed: {pe}. Falling back to reply previews...")
+
+    # 3. Third Fallbacks: Attempt to download from DiskWala reply message details if still no thumbnail
     if not thumb_path:
         # Attempt to download from reply_msg.web_page.photo (link preview)
         if reply_msg.web_page and reply_msg.web_page.photo:
